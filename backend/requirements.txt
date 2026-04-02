@@ -1,0 +1,34 @@
+# ── Web Framework ──────────────────────────────────────────
+fastapi==0.115.6
+uvicorn==0.32.1
+python-multipart==0.0.20        # file uploads
+
+# ── Database ────────────────────────────────────────────────
+sqlalchemy==2.0.36
+asyncpg==0.30.0                 # async PostgreSQL driver
+psycopg2-binary==2.9.10         # sync PostgreSQL driver (alembic needs this)
+alembic==1.14.0                 # database migrations
+
+# ── PDF Parsing ─────────────────────────────────────────────
+pymupdf==1.25.1                 # primary CV parser (fitz)
+pdfplumber==0.11.4              # fallback for tables in PDFs
+
+# ── LLM & Orchestration ─────────────────────────────────────
+langchain==0.3.13
+langchain-community==0.3.13     # Ollama integration
+langchain-core==0.3.28
+ollama==0.4.4                   # local LLM (LLaMA 3.1)
+
+# ── Data Handling ────────────────────────────────────────────
+pandas==2.2.3                   # structured data / CSV / Excel export
+openpyxl==3.1.5                 # Excel file writing
+pydantic==2.10.3                # data validation (FastAPI uses this)
+
+# ── HTTP Requests ────────────────────────────────────────────
+httpx==0.28.1                   # async HTTP (calling external APIs)
+requests==2.32.3                # sync HTTP (Scopus, WoS, CORE)
+
+# ── Utilities ────────────────────────────────────────────────
+python-dotenv==1.0.1            # loading .env variables
+aiosqlite==0.20.0               # only needed if you switch to SQLite later
+tenacity==9.0.0                 # retry logic for LLM calls
