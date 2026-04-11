@@ -12,7 +12,7 @@ async def fix_enum():
             await session.execute(text("ALTER TYPE processing_status ADD VALUE IF NOT EXISTS 'COMPLETED'"))
             await session.execute(text("ALTER TYPE processing_status ADD VALUE IF NOT EXISTS 'FAILED'"))
             await session.commit()
-            print("✅ Successfully updated the Enum type in PostgreSQL.")
+            print("Successfully updated the Enum type in PostgreSQL.")
         except Exception as e:
             print(f"Error: {e}")
 

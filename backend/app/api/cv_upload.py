@@ -6,7 +6,7 @@
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-import fitz  # PyMuPDF , for pdf parsing
+import fitz
 import os
 import shutil
 from datetime import datetime
@@ -56,10 +56,7 @@ CV RAW TEXT:
     return system_prompt, user_prompt
 
 
-# =============================================================================
 # HELPER — Extract raw text from PDF using PyMuPDF
-# =============================================================================
-
 def extract_text_from_pdf(filepath: str) -> str:
     """
     Opens a PDF file and extracts all text page by page.
@@ -72,7 +69,7 @@ def extract_text_from_pdf(filepath: str) -> str:
         for page_num in range(len(doc)):
             page = doc[page_num]
             full_text += page.get_text()
-            full_text += "\n"  # separator between pages
+            full_text += "\n"  # Separator between pages
 
         doc.close()
 
@@ -91,10 +88,7 @@ def extract_text_from_pdf(filepath: str) -> str:
         )
 
 
-# =============================================================================
 # HELPER — Save candidate to database
-# =============================================================================
-
 async def save_candidate_to_db(
     db: AsyncSession,
     filename: str,
@@ -143,7 +137,7 @@ async def upload_and_parse_cv(
         shutil.copyfileobj(file.file, buffer)
 
     # Extract raw text from PDF
-    print(f"📄 Parsing CV: {file.filename}")
+    print(f"Parsing CV: {file.filename}")
     raw_text = extract_text_from_pdf(filepath)
 
     if not raw_text or len(raw_text) < 50:
@@ -152,7 +146,7 @@ async def upload_and_parse_cv(
             detail="Could not extract meaningful text from this PDF. It may be scanned or image-based."
         )
 
-    print(f"✅ Extracted {len(raw_text)} characters from {file.filename}")
+    print(f"Extracted {len(raw_text)} characters from {file.filename}")
 
     # Save to database
     candidate = await save_candidate_to_db(
@@ -162,16 +156,14 @@ async def upload_and_parse_cv(
         raw_text=raw_text
     )
 
-    print(f"💾 Saved candidate ID {candidate.id} to database")
+    print(f"Saved candidate ID {candidate.id} to database")
 
-    # Delete the PDF file after successful processing
     try:
         os.remove(filepath)
-        print(f"🗑️ Deleted parsed CV from uploads: {filepath}")
+        print(f"Deleted parsed CV from uploads: {filepath}")
     except Exception as e:
-        print(f"⚠️ Failed to delete file {filepath}: {e}")
+        print(f"Failed to delete file {filepath}: {e}")
 
-    # Return response to frontend
     return {
         "success": True,
         "candidate_id": candidate.id,
@@ -181,12 +173,9 @@ async def upload_and_parse_cv(
         "message": f"CV uploaded and parsed successfully. Candidate ID: {candidate.id}"
     }
 
-# =============================================================================
 # ENDPOINT — POST /cv/parse
 # Called after frontend saves the PDF to uploads/ folder
 # Frontend sends just the filename, backend does the rest
-# =============================================================================
-
 @router.post("/parse")
 async def parse_cv(
     filename: str,
@@ -222,7 +211,7 @@ async def parse_cv(
         )
 
     # Step 2 — Extract raw text from PDF
-    print(f"📄 Parsing CV: {filename}")
+    print(f"Parsing CV: {filename}")
     raw_text = extract_text_from_pdf(filepath)
 
     if not raw_text or len(raw_text) < 50:
@@ -231,7 +220,7 @@ async def parse_cv(
             detail="Could not extract meaningful text from this PDF. It may be scanned or image-based."
         )
 
-    print(f"✅ Extracted {len(raw_text)} characters from {filename}")
+    print(f"Extracted {len(raw_text)} characters from {filename}")
 
     # Step 3 — Save to database
     candidate = await save_candidate_to_db(
@@ -241,14 +230,14 @@ async def parse_cv(
         raw_text=raw_text
     )
 
-    print(f"💾 Saved candidate ID {candidate.id} to database")
+    print(f"Saved candidate ID {candidate.id} to database")
 
     # Step 3.5 — Delete the PDF file after successful processing
     try:
         os.remove(filepath)
-        print(f"🗑️ Deleted parsed CV from uploads: {filepath}")
+        print(f"Deleted parsed CV from uploads: {filepath}")
     except Exception as e:
-        print(f"⚠️ Failed to delete file {filepath}: {e}")
+        print(f"Failed to delete file {filepath}: {e}")
 
     # Step 4 — Return response to frontend
     return {
@@ -261,11 +250,8 @@ async def parse_cv(
     }
 
 
-# =============================================================================
 # ENDPOINT — GET /cv/candidates
 # Returns all candidates in the database (for dashboard)
-# =============================================================================
-
 @router.get("/candidates")
 async def get_all_candidates(db: AsyncSession = Depends(get_db)):
     """
@@ -292,11 +278,8 @@ async def get_all_candidates(db: AsyncSession = Depends(get_db)):
     }
 
 
-# =============================================================================
 # ENDPOINT — GET /cv/candidate/{id}
 # Returns full candidate record including raw text
-# =============================================================================
-
 @router.get("/candidate/{candidate_id}")
 async def get_candidate(
     candidate_id: int,

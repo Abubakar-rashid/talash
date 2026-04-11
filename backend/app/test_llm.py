@@ -82,7 +82,7 @@ async def main():
     try:
         health_ok = await test_health()
         if not health_ok:
-            print("\n❌ Groq is not reachable.")
+            print("\nGroq is not reachable.")
             print("Check your GROQ_API_KEY in .env")
             return
 
@@ -90,11 +90,11 @@ async def main():
         await test_text_output()
 
         print("\n" + "=" * 50)
-        print("✅ All tests passed! LLM is ready.")
+        print("All tests passed! LLM is ready.")
         print("=" * 50)
 
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\nError: {e}")
 
 
 if __name__ == "__main__":

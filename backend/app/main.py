@@ -21,12 +21,12 @@ from app.api.cv_upload import router as cv_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup — initialize database tables
-    print("🚀 Starting TALASH backend...")
+    print("Starting TALASH backend...")
     await init_db()
-    print("✅ Database connected and tables ready.")
+    print("Database connected and tables ready.")
     yield
     # Shutdown
-    print("🛑 Shutting down TALASH backend...")
+    print("Shutting down TALASH backend...")
 
 
 # =============================================================================
