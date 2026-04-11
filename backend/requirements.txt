@@ -25,7 +25,7 @@ openpyxl==3.1.5                 # Excel file writing
 pydantic==2.10.3                # data validation (FastAPI uses this)
 
 # ── HTTP Requests ────────────────────────────────────────────
-httpx==0.28.1                   # async HTTP (calling external APIs)
+httpx==0.27.2                   # async HTTP (compatible with ollama 0.4.4)
 requests==2.32.3                # sync HTTP (Scopus, WoS, CORE)
 
 # ── Utilities ────────────────────────────────────────────────
