@@ -42,8 +42,7 @@ talash/
       modules/
     requirements.txt
   frontend/
-    talash/
-      src/
+    src/
   database_structure.csv
 ```
 
@@ -90,7 +89,7 @@ Backend URLs:
 
 ## Frontend Setup
 
-From `talash/frontend/talash`:
+From `talash/frontend`:
 
 ```bash
 npm install
@@ -135,7 +134,7 @@ python app/test_llm.py
 ## Next Milestones
 
 - Add migrations (Alembic flow) for the full schema
-- Implement remaining extraction/analysis modules
+- Implement remaining extraction/analysis modules   
 - Add authentication and role-based access
 - Improve frontend UX and API configuration via environment variables
 - Add automated tests for API and parsing pipeline
