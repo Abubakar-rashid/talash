@@ -16,6 +16,7 @@ __pycache__/
 .env
 .env.*
 !.env.example
+backend/.env
 
 # logs and local runtime data
 *.log

@@ -6,9 +6,11 @@
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+load_dotenv(dotenv_path=ENV_PATH)
 
 # =============================================================================
 # DATABASE URL

@@ -3,10 +3,12 @@
 import json
 import re
 import os
+from pathlib import Path
 from groq import AsyncGroq
 from dotenv import load_dotenv
 
-load_dotenv()
+ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+load_dotenv(dotenv_path=ENV_PATH)
 
 # =============================================================================
 # CONFIG
