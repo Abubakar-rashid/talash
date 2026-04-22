@@ -59,4 +59,20 @@ export async function parseCandidateByFilename(filename) {
   return parseResponse(response);
 }
 
+export async function preprocessCandidate(candidateId) {
+  const response = await fetch(`${API_BASE_URL}/cv/candidate/${candidateId}/preprocess`, {
+    method: 'POST',
+  });
+
+  return parseResponse(response);
+}
+
+export async function exportStructuredDataset() {
+  const response = await fetch(`${API_BASE_URL}/cv/preprocess/export`, {
+    method: 'POST',
+  });
+
+  return parseResponse(response);
+}
+
 export { API_BASE_URL };

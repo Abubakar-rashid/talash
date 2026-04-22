@@ -116,11 +116,16 @@ Base prefix: `/cv`
   - Get full candidate details, including raw text
 - `POST /cv/candidate/{candidate_id}/analyze`
   - Run LLM analysis and persist structured fields
+- `POST /cv/candidate/{candidate_id}/preprocess`
+  - Generate structured preprocessing tables plus CSV/XLSX exports for one candidate
+- `POST /cv/preprocess/export`
+  - Generate structured preprocessing exports for all usable candidates
 
 ## Database Notes
 
 - The running backend currently relies on the `candidates` table model in `backend/app/db/models.py`.
 - A broader target schema for future modules exists in `database_structure.csv`.
+- Structured preprocessing exports are written under `backend/exports/` by default.
 
 ## Quick Test Commands
 

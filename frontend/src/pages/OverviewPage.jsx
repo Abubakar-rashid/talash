@@ -1,7 +1,22 @@
+import { useState } from 'react';
+import { exportStructuredDataset } from '../lib/api';
+
 export default function OverviewPage({ candidates, loading, refreshCandidates }) {
+  const [exportStatus, setExportStatus] = useState('');
+
   const total = candidates.length;
-  const analyzed = candidates.filter((item) => item.status === 'analyzed').length;
+  const analyzed = candidates.filter((item) => item.status === 'completed').length;
   const processing = candidates.filter((item) => item.status === 'processing').length;
+
+  async function handleExport() {
+    setExportStatus('Generating structured CSV and Excel outputs...');
+    try {
+      const result = await exportStructuredDataset();
+      setExportStatus(`Export ready for ${result.count} candidate(s). Files are saved in ${result.export_dir}.`);
+    } catch (error) {
+      setExportStatus(error.message || 'Failed to generate structured export.');
+    }
+  }
 
   return (
     <section className="page-grid">
@@ -14,6 +29,10 @@ export default function OverviewPage({ candidates, loading, refreshCandidates })
         <button className="btn" type="button" onClick={refreshCandidates} disabled={loading}>
           {loading ? 'Refreshing...' : 'Refresh Candidate Data'}
         </button>
+        <button className="btn" type="button" onClick={handleExport} style={{ marginLeft: 12 }}>
+          Export Structured Dataset
+        </button>
+        {exportStatus && <p className="status-spacing small-text">{exportStatus}</p>}
       </article>
 
       <section className="stats-grid reveal delay-1">

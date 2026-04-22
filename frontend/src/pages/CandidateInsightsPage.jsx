@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   detectMissingInformation,
   draftMissingInfoEmail,
@@ -6,6 +6,7 @@ import {
   extractExperienceSignals,
   extractResearchSignals,
 } from '../lib/profileParsers';
+import { preprocessCandidate } from '../lib/api';
 
 export default function CandidateInsightsPage({
   candidates,
@@ -20,6 +21,7 @@ export default function CandidateInsightsPage({
   refreshCandidates,
 }) {
   const selectedId = selectedCandidateId || selectedCandidate?.id;
+  const [preprocessStatus, setPreprocessStatus] = useState('');
 
   const education = useMemo(
     () => extractEducationSignals(selectedCandidate?.raw_text),
@@ -38,6 +40,21 @@ export default function CandidateInsightsPage({
     [selectedCandidate],
   );
 
+  async function handlePreprocessSelected() {
+    if (!selectedCandidate?.id) {
+      return;
+    }
+
+    setPreprocessStatus('Generating structured CSV and Excel outputs for this candidate...');
+
+    try {
+      const result = await preprocessCandidate(selectedCandidate.id);
+      setPreprocessStatus(`Preprocessing complete. Files are saved in ${result.exports.directory}.`);
+    } catch (error) {
+      setPreprocessStatus(error.message || 'Failed to preprocess candidate.');
+    }
+  }
+
   return (
     <section className="page-grid">
       <section className="summary-strip reveal">
@@ -47,11 +64,11 @@ export default function CandidateInsightsPage({
         </article>
         <article className="summary-tile">
           <p>Analyzed</p>
-          <strong>{candidates.filter((item) => item.status === 'analyzed').length}</strong>
+          <strong>{candidates.filter((item) => item.status === 'completed').length}</strong>
         </article>
         <article className="summary-tile">
           <p>Pending/Processing</p>
-          <strong>{candidates.filter((item) => item.status !== 'analyzed').length}</strong>
+          <strong>{candidates.filter((item) => item.status !== 'completed').length}</strong>
         </article>
       </section>
 
@@ -128,6 +145,10 @@ export default function CandidateInsightsPage({
                 >
                   {activeAnalyses[selectedCandidate.id] ? 'Analyzing...' : 'Run/Refresh LLM Analysis'}
                 </button>
+                <button type="button" className="btn" onClick={handlePreprocessSelected} style={{ marginLeft: 12 }}>
+                  Generate Structured Preprocessing
+                </button>
+                {preprocessStatus && <p className="status-spacing small-text">{preprocessStatus}</p>}
               </section>
 
               <section className="info-box">
