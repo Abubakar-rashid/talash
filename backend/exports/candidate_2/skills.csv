@@ -1,0 +1,21 @@
+candidate_id,evidence_note,evidence_strength,job_relevance_score,skill_category,skill_name,supported_by_experience,supported_by_publications
+2,Detected keyword 'python' in CV text.,partial,,Programming,python,True,False
+2,Detected keyword 'java' in CV text.,partial,,Programming,java,True,False
+2,Detected keyword 'c++' in CV text.,partial,,Programming,c++,True,False
+2,Detected keyword 'javascript' in CV text.,partial,,Programming,javascript,True,False
+2,Detected keyword 'sql' in CV text.,partial,,Programming,sql,True,False
+2,Detected keyword 'data analysis' in CV text.,partial,,Data / Analytics,data analysis,True,False
+2,Detected keyword 'pandas' in CV text.,partial,,Data / Analytics,pandas,True,False
+2,Detected keyword 'numpy' in CV text.,partial,,Data / Analytics,numpy,True,False
+2,Detected keyword 'power bi' in CV text.,partial,,Data / Analytics,power bi,True,False
+2,Detected keyword 'tableau' in CV text.,partial,,Data / Analytics,tableau,True,False
+2,Detected keyword 'statistics' in CV text.,partial,,Data / Analytics,statistics,True,False
+2,Detected keyword 'machine learning' in CV text.,partial,,AI / ML,machine learning,True,False
+2,Detected keyword 'deep learning' in CV text.,partial,,AI / ML,deep learning,True,False
+2,Detected keyword 'nlp' in CV text.,partial,,AI / ML,nlp,True,False
+2,Detected keyword 'computer vision' in CV text.,partial,,AI / ML,computer vision,True,False
+2,Detected keyword 'ai' in CV text.,partial,,AI / ML,ai,True,False
+2,Detected keyword 'fastapi' in CV text.,partial,,Web / Software,fastapi,True,False
+2,Detected keyword 'react' in CV text.,partial,,Web / Software,react,True,False
+2,Detected keyword 'node' in CV text.,partial,,Web / Software,node,True,False
+2,Detected keyword 'api' in CV text.,partial,,Web / Software,api,True,False

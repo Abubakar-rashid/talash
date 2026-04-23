@@ -11,6 +11,7 @@ import os
 from app.db.database import init_db
 import app.db.models  # Ensure models are loaded before init_db
 from app.api.cv_upload import router as cv_router
+from app.api.analysis import router as analysis_router
 
 
 # =============================================================================
@@ -55,6 +56,7 @@ app.add_middleware(
 )
 
 app.include_router(cv_router)
+app.include_router(analysis_router)
 
 
 # =============================================================================

@@ -15,6 +15,7 @@ from datetime import datetime
 from app.db.database import get_db
 from app.db.models import Candidate, ProcessingStatus
 from app.llm.llm_client import ask_llm
+from app.modules.preprocessing import build_and_export_dataset
 
 router = APIRouter(prefix="/cv", tags=["CV Upload"])
 
@@ -562,3 +563,73 @@ async def analyze_candidate(
             status_code=500,
             detail=f"LLM analysis failed: {str(e)}"
         )
+
+
+@router.post("/candidate/{candidate_id}/preprocess")
+async def preprocess_candidate(
+    candidate_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Build and export structured tabular data for one candidate.
+    """
+    result = await db.execute(select(Candidate).where(Candidate.id == candidate_id))
+    candidate = result.scalar_one_or_none()
+
+    if not candidate:
+        raise HTTPException(status_code=404, detail=f"Candidate with ID {candidate_id} not found.")
+
+    raw_text = candidate.cv_raw_text or ""
+    if len(raw_text.strip()) < 50:
+        raise HTTPException(status_code=422, detail="Candidate has insufficient raw CV text for preprocessing.")
+
+    dataset, exports = build_and_export_dataset(
+        raw_text=raw_text,
+        candidate_id=candidate.id,
+        filename=candidate.cv_filename,
+    )
+
+    return {
+        "success": True,
+        "candidate_id": candidate.id,
+        "dataset": dataset.to_dict(),
+        "exports": exports,
+    }
+
+
+@router.post("/preprocess/export")
+async def export_all_structured_datasets(db: AsyncSession = Depends(get_db)):
+    """
+    Generate structured exports for all candidates with available raw CV text.
+    """
+    result = await db.execute(select(Candidate).order_by(Candidate.uploaded_at.desc()))
+    candidates = result.scalars().all()
+
+    export_results: list[dict] = []
+    for candidate in candidates:
+        raw_text = (candidate.cv_raw_text or "").strip()
+        if len(raw_text) < 50:
+            continue
+
+        dataset, exports = build_and_export_dataset(
+            raw_text=raw_text,
+            candidate_id=candidate.id,
+            filename=candidate.cv_filename,
+        )
+        export_results.append(
+            {
+                "candidate_id": candidate.id,
+                "filename": candidate.cv_filename,
+                "exports": exports,
+                "metadata": dataset.metadata,
+            }
+        )
+
+    export_dir = export_results[0]["exports"]["directory"].rsplit(os.sep, 1)[0] if export_results else ""
+
+    return {
+        "success": True,
+        "count": len(export_results),
+        "export_dir": export_dir,
+        "results": export_results,
+    }

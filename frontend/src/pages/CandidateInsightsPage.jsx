@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   detectMissingInformation,
   draftMissingInfoEmail,
@@ -6,7 +6,12 @@ import {
   extractExperienceSignals,
   extractResearchSignals,
 } from '../lib/profileParsers';
-import { preprocessCandidate } from '../lib/api';
+import {
+  getCandidateAnalysis,
+  preprocessCandidate,
+  redraftCandidateEmail,
+  runFullCandidateAnalysis,
+} from '../lib/api';
 
 export default function CandidateInsightsPage({
   candidates,
@@ -22,6 +27,9 @@ export default function CandidateInsightsPage({
 }) {
   const selectedId = selectedCandidateId || selectedCandidate?.id;
   const [preprocessStatus, setPreprocessStatus] = useState('');
+  const [analysisStatus, setAnalysisStatus] = useState('');
+  const [storedAnalysis, setStoredAnalysis] = useState(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
 
   const education = useMemo(
     () => extractEducationSignals(selectedCandidate?.raw_text),
@@ -40,6 +48,35 @@ export default function CandidateInsightsPage({
     [selectedCandidate],
   );
 
+  const resolvedMissingFields = storedAnalysis?.missing_fields?.length
+    ? storedAnalysis.missing_fields
+    : missingFields;
+
+  const resolvedEmailDraft = storedAnalysis?.draft_email?.trim()
+    ? storedAnalysis.draft_email
+    : draftMissingInfoEmail(selectedCandidate, resolvedMissingFields);
+
+  useEffect(() => {
+    async function loadStoredAnalysis() {
+      if (!selectedCandidate?.id) {
+        setStoredAnalysis(null);
+        return;
+      }
+
+      setAnalysisLoading(true);
+      try {
+        const analysis = await getCandidateAnalysis(selectedCandidate.id);
+        setStoredAnalysis(analysis);
+      } catch {
+        setStoredAnalysis(null);
+      } finally {
+        setAnalysisLoading(false);
+      }
+    }
+
+    loadStoredAnalysis();
+  }, [selectedCandidate?.id]);
+
   async function handlePreprocessSelected() {
     if (!selectedCandidate?.id) {
       return;
@@ -52,6 +89,38 @@ export default function CandidateInsightsPage({
       setPreprocessStatus(`Preprocessing complete. Files are saved in ${result.exports.directory}.`);
     } catch (error) {
       setPreprocessStatus(error.message || 'Failed to preprocess candidate.');
+    }
+  }
+
+  async function handleRunFullAnalysis() {
+    if (!selectedCandidate?.id) {
+      return;
+    }
+
+    setAnalysisStatus('Running full backend analysis (education, experience, research, missing info)...');
+    try {
+      await runFullCandidateAnalysis(selectedCandidate.id);
+      const analysis = await getCandidateAnalysis(selectedCandidate.id);
+      setStoredAnalysis(analysis);
+      setAnalysisStatus('Full backend analysis completed and loaded.');
+    } catch (error) {
+      setAnalysisStatus(error.message || 'Failed to run full backend analysis.');
+    }
+  }
+
+  async function handleRedraftEmail() {
+    if (!selectedCandidate?.id) {
+      return;
+    }
+
+    setAnalysisStatus('Generating personalized draft email from backend...');
+    try {
+      await redraftCandidateEmail(selectedCandidate.id);
+      const analysis = await getCandidateAnalysis(selectedCandidate.id);
+      setStoredAnalysis(analysis);
+      setAnalysisStatus('Draft email refreshed from backend analysis.');
+    } catch (error) {
+      setAnalysisStatus(error.message || 'Failed to redraft email.');
     }
   }
 
@@ -149,6 +218,14 @@ export default function CandidateInsightsPage({
                   Generate Structured Preprocessing
                 </button>
                 {preprocessStatus && <p className="status-spacing small-text">{preprocessStatus}</p>}
+                <button type="button" className="btn" onClick={handleRunFullAnalysis} style={{ marginLeft: 12 }}>
+                  Run Full Backend Analysis
+                </button>
+                <button type="button" className="btn" onClick={handleRedraftEmail} style={{ marginLeft: 12 }}>
+                  Refresh Draft Email
+                </button>
+                {analysisLoading && <p className="status-spacing small-text">Loading stored backend analysis...</p>}
+                {analysisStatus && <p className="status-spacing small-text">{analysisStatus}</p>}
               </section>
 
               <section className="info-box">
@@ -174,13 +251,21 @@ export default function CandidateInsightsPage({
                 <p><strong>Teaching Evidence:</strong> {experience.hasTeachingEvidence ? 'Yes' : 'No'}</p>
                 <p><strong>Industry Evidence:</strong> {experience.hasIndustryEvidence ? 'Yes' : 'No'}</p>
                 <p><strong>Timeline Years:</strong> {experience.timelineHints.join(', ') || 'None detected'}</p>
+                {!!storedAnalysis?.experience?.timeline_checks && (
+                  <>
+                    <p><strong>Education-Employment Overlaps:</strong> {storedAnalysis.experience.timeline_checks.education_employment_overlaps?.length || 0}</p>
+                    <p><strong>Job-Job Overlaps:</strong> {storedAnalysis.experience.timeline_checks.job_overlaps?.length || 0}</p>
+                    <p><strong>Professional Gaps:</strong> {storedAnalysis.experience.timeline_checks.professional_gaps?.length || 0}</p>
+                    <p><strong>Progression Signal:</strong> {storedAnalysis.experience.timeline_checks.progression_signal || 'n/a'}</p>
+                  </>
+                )}
               </section>
 
               <section className="info-box">
                 <h3>Missing Information</h3>
-                <p><strong>Missing Fields:</strong> {missingFields.join(', ') || 'No key fields missing'}</p>
-                {missingFields.length > 0 && (
-                  <pre className="email-draft">{draftMissingInfoEmail(selectedCandidate, missingFields)}</pre>
+                <p><strong>Missing Fields:</strong> {resolvedMissingFields.join(', ') || 'No key fields missing'}</p>
+                {resolvedMissingFields.length > 0 && (
+                  <pre className="email-draft">{resolvedEmailDraft}</pre>
                 )}
               </section>
 

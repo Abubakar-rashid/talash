@@ -4,6 +4,7 @@ import { analyzeCandidate, getCandidateById, listCandidates } from './lib/api';
 import OverviewPage from './pages/OverviewPage';
 import IngestionPage from './pages/IngestionPage';
 import CandidateInsightsPage from './pages/CandidateInsightsPage';
+import AnalyticsReportsPage from './pages/AnalyticsReportsPage';
 
 const ROUTES = [
   {
@@ -26,6 +27,13 @@ const ROUTES = [
     title: 'Parsed and Researched Candidate Information',
     description: 'All candidate sections in one place: Education, Research, Experience, Missing Info, and Summary.',
     component: CandidateInsightsPage,
+  },
+  {
+    id: 'reports',
+    label: 'Reports & Emails',
+    title: 'Tabular Outputs, Charts, and Draft Emails',
+    description: 'Review candidate tables, initial charts, and personalized missing-information draft emails.',
+    component: AnalyticsReportsPage,
   },
 ];
 

@@ -1,5 +1,10 @@
 import { useMemo, useState } from 'react';
-import { parseCandidateByFilename, uploadCandidateCV } from '../lib/api';
+import {
+  ingestCandidateFolder,
+  parseCandidateByFilename,
+  uploadCandidateCV,
+  uploadCandidateCVBulk,
+} from '../lib/api';
 
 function pickPdfFiles(fileList) {
   return Array.from(fileList || []).filter((file) => file.name.toLowerCase().endsWith('.pdf'));
@@ -10,6 +15,8 @@ export default function IngestionPage({ refreshCandidates }) {
   const [bulkFiles, setBulkFiles] = useState([]);
   const [folderFiles, setFolderFiles] = useState([]);
   const [serverFilename, setServerFilename] = useState('');
+  const [serverFolderPath, setServerFolderPath] = useState('uploads');
+  const [deleteAfterFolderParse, setDeleteAfterFolderParse] = useState(false);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState('');
 
@@ -32,20 +39,39 @@ export default function IngestionPage({ refreshCandidates }) {
     setRunning(true);
     setStatus(`Uploading ${files.length} file(s) from ${label}...`);
 
-    const outcomes = await Promise.allSettled(files.map((file) => uploadOne(file)));
-    const successCount = outcomes.filter((entry) => entry.status === 'fulfilled').length;
-    const failedEntries = outcomes
-      .filter((entry) => entry.status === 'rejected')
-      .map((entry) => entry.reason?.message || 'Unknown error');
+    try {
+      const result = await uploadCandidateCVBulk(files);
+      setStatus(
+        `Uploaded ${result.processed}/${result.total_received} file(s) from ${label}. Failed: ${result.failed}.`,
+      );
+      await refreshCandidates?.();
+    } catch (error) {
+      setStatus(`Bulk upload failed: ${error.message}`);
+    } finally {
+      setRunning(false);
+    }
+  }
 
-    setStatus(
-      failedEntries.length === 0
-        ? `Uploaded ${successCount}/${files.length} file(s) successfully from ${label}.`
-        : `Uploaded ${successCount}/${files.length}. Failed: ${failedEntries.slice(0, 2).join(' | ')}`,
-    );
+  async function handleServerFolderIngest() {
+    if (!serverFolderPath.trim()) {
+      setStatus('Please provide a valid server folder path.');
+      return;
+    }
 
-    await refreshCandidates?.();
-    setRunning(false);
+    setRunning(true);
+    setStatus(`Reading and parsing PDFs from server folder: ${serverFolderPath} ...`);
+
+    try {
+      const result = await ingestCandidateFolder(serverFolderPath.trim(), deleteAfterFolderParse);
+      setStatus(
+        `Folder ingestion complete. Processed ${result.processed}/${result.total_found}. Failed: ${result.failed}.`,
+      );
+      await refreshCandidates?.();
+    } catch (error) {
+      setStatus(`Folder ingestion failed: ${error.message}`);
+    } finally {
+      setRunning(false);
+    }
   }
 
   async function handleSingleUpload() {
@@ -144,6 +170,37 @@ export default function IngestionPage({ refreshCandidates }) {
               Upload Folder PDFs ({folderFiles.length})
             </button>
           </div>
+        </div>
+
+        <div className="upload-card">
+          <h3>Ingest PDFs from Server Folder Path</h3>
+          <div className="upload-row">
+            <input
+              type="text"
+              value={serverFolderPath}
+              onChange={(event) => setServerFolderPath(event.target.value)}
+              placeholder="uploads"
+              disabled={running}
+              className="text-input"
+            />
+            <button
+              className="btn compact"
+              type="button"
+              onClick={handleServerFolderIngest}
+              disabled={running || !serverFolderPath.trim()}
+            >
+              Ingest Server Folder
+            </button>
+          </div>
+          <label className="muted small-text" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              checked={deleteAfterFolderParse}
+              onChange={(event) => setDeleteAfterFolderParse(event.target.checked)}
+              disabled={running}
+            />
+            Delete PDFs after parse
+          </label>
         </div>
 
         <div className="upload-card">

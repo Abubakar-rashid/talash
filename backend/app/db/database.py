@@ -5,6 +5,7 @@
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
+from sqlalchemy import text
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -83,3 +84,10 @@ async def get_db():
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        # lightweight schema evolution for analysis columns on existing databases
+        await conn.execute(text("ALTER TABLE candidates ADD COLUMN IF NOT EXISTS education_json TEXT"))
+        await conn.execute(text("ALTER TABLE candidates ADD COLUMN IF NOT EXISTS experience_json TEXT"))
+        await conn.execute(text("ALTER TABLE candidates ADD COLUMN IF NOT EXISTS research_json TEXT"))
+        await conn.execute(text("ALTER TABLE candidates ADD COLUMN IF NOT EXISTS missing_info_json TEXT"))
+        await conn.execute(text("ALTER TABLE candidates ADD COLUMN IF NOT EXISTS missing_info_email TEXT"))

@@ -42,6 +42,31 @@ export async function uploadCandidateCV(file) {
   return parseResponse(response);
 }
 
+export async function uploadCandidateCVBulk(files) {
+  const formData = new FormData();
+  files.forEach((file) => formData.append('files', file));
+
+  const response = await fetch(`${API_BASE_URL}/cv/upload/bulk`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  return parseResponse(response);
+}
+
+export async function ingestCandidateFolder(folderPath, deleteAfterParse = false) {
+  const params = new URLSearchParams({
+    folder_path: folderPath,
+    delete_after_parse: String(deleteAfterParse),
+  });
+
+  const response = await fetch(`${API_BASE_URL}/cv/ingest/folder?${params.toString()}`, {
+    method: 'POST',
+  });
+
+  return parseResponse(response);
+}
+
 export async function analyzeCandidate(candidateId) {
   const response = await fetch(`${API_BASE_URL}/cv/candidate/${candidateId}/analyze`, {
     method: 'POST',
@@ -69,6 +94,27 @@ export async function preprocessCandidate(candidateId) {
 
 export async function exportStructuredDataset() {
   const response = await fetch(`${API_BASE_URL}/cv/preprocess/export`, {
+    method: 'POST',
+  });
+
+  return parseResponse(response);
+}
+
+export async function runFullCandidateAnalysis(candidateId) {
+  const response = await fetch(`${API_BASE_URL}/analysis/candidate/${candidateId}/full`, {
+    method: 'POST',
+  });
+
+  return parseResponse(response);
+}
+
+export async function getCandidateAnalysis(candidateId) {
+  const response = await fetch(`${API_BASE_URL}/analysis/candidate/${candidateId}`);
+  return parseResponse(response);
+}
+
+export async function redraftCandidateEmail(candidateId) {
+  const response = await fetch(`${API_BASE_URL}/analysis/candidate/${candidateId}/email`, {
     method: 'POST',
   });
 

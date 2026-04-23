@@ -380,6 +380,138 @@
   font-size: 20px;
 }
 
+.chart-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.chart-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fffdf9;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.chart-card h3 {
+  font-size: 16px;
+}
+
+.metric-row {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.bar-track {
+  height: 10px;
+  border-radius: 999px;
+  background: #efe4d7;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  min-width: 2px;
+}
+
+.bar-fill.success {
+  background: linear-gradient(135deg, #3aa655, #2f7d32);
+}
+
+.bar-fill.warning {
+  background: linear-gradient(135deg, #d38b1f, #b45309);
+}
+
+.bar-fill.danger {
+  background: linear-gradient(135deg, #cf3f3f, #9f2424);
+}
+
+.bar-fill.neutral {
+  background: linear-gradient(135deg, #8f8f8f, #666);
+}
+
+.table-scroll {
+  margin-top: 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 760px;
+}
+
+.report-table th,
+.report-table td {
+  padding: 10px;
+  border-bottom: 1px solid #f0e7dc;
+  text-align: left;
+}
+
+.report-table thead th {
+  position: sticky;
+  top: 0;
+  background: #fff6eb;
+  z-index: 1;
+}
+
+.report-table tbody tr {
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.report-table tbody tr:hover {
+  background: #fffbf5;
+}
+
+.report-table tbody tr.active-row {
+  background: #fff2df;
+}
+
+.email-panel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fffdf9;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.email-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.email-toolbar p {
+  margin: 0;
+}
+
+.email-draft-pretty {
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--mono);
+  font-size: 13px;
+  max-height: 360px;
+  overflow: auto;
+  line-height: 1.5;
+}
+
 .delay-1 {
   animation-delay: 0.08s;
 }
@@ -409,8 +541,14 @@
   .two-columns,
   .candidate-layout,
   .insight-grid,
-  .summary-strip {
+  .summary-strip,
+  .chart-grid {
     grid-template-columns: 1fr;
+  }
+
+  .metric-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
 
   .upload-row {

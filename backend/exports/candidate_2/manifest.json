@@ -1,0 +1,7 @@
+{
+  "candidate_id": "2",
+  "filename": "Umair_Shakoor.pdf",
+  "generated_at": "2026-04-23T15:31:09",
+  "workbook_path": "exports\\candidate_2\\candidate_2_structured_profile.xlsx",
+  "tables": "{\"personal_info\": \"exports\\\\candidate_2\\\\personal_info.csv\", \"education_records\": \"exports\\\\candidate_2\\\\education_records.csv\", \"experience_records\": \"exports\\\\candidate_2\\\\experience_records.csv\", \"skills\": \"exports\\\\candidate_2\\\\skills.csv\", \"publications\": \"exports\\\\candidate_2\\\\publications.csv\", \"gaps\": \"exports\\\\candidate_2\\\\gaps.csv\"}"
+}

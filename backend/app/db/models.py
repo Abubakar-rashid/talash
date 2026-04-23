@@ -25,6 +25,13 @@ class Candidate(Base):
     status = Column(Enum(ProcessingStatus, name="processing_status"), default=ProcessingStatus.PENDING)
     overall_summary = Column(Text, nullable=True)
     overall_score = Column(Float, nullable=True)
+
+    # structured analysis outputs (stored as json text)
+    education_json = Column(Text, nullable=True)
+    experience_json = Column(Text, nullable=True)
+    research_json = Column(Text, nullable=True)
+    missing_info_json = Column(Text, nullable=True)
+    missing_info_email = Column(Text, nullable=True)
     
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
     processed_at = Column(DateTime(timezone=True), nullable=True)
