@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import fitz
 import os
+import re
 import shutil
 from datetime import datetime
 
@@ -18,6 +19,62 @@ from app.llm.llm_client import ask_llm
 router = APIRouter(prefix="/cv", tags=["CV Upload"])
 
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
+LLM_PROMPT_MAX_CHARS = int(os.getenv("LLM_PROMPT_MAX_CHARS", "8000"))
+LLM_RESPONSE_MAX_TOKENS = int(os.getenv("LLM_RESPONSE_MAX_TOKENS", "500"))
+
+
+def sanitize_cv_text(text: str | None) -> str:
+    """
+    Remove characters PostgreSQL cannot store in TEXT/VARCHAR.
+    Keep common formatting characters like newline and tab.
+    """
+    if not text:
+        return ""
+
+    # PostgreSQL rejects embedded NUL bytes.
+    cleaned = text.replace("\x00", "")
+    # Remove other non-printable control characters except \t, \n, \r.
+    cleaned = re.sub(r"[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]", "", cleaned)
+    return cleaned
+
+
+def _safe_filename_component(value: str) -> str:
+    """Convert free-text into a filesystem-safe slug-like component."""
+    if not value:
+        return "candidate"
+    value = re.sub(r"[^A-Za-z0-9]+", "_", value).strip("_")
+    return value[:120] or "candidate"
+
+
+def _unique_upload_path(filename: str) -> tuple[str, str]:
+    """Return a unique filename + path in uploads to avoid collisions."""
+    base, ext = os.path.splitext(filename)
+    safe_base = _safe_filename_component(base)
+    ext = ext if ext else ".pdf"
+
+    candidate_name = f"{safe_base}{ext}"
+    path = os.path.join(UPLOAD_DIR, candidate_name)
+    counter = 1
+    while os.path.exists(path):
+        candidate_name = f"{safe_base}_{counter}{ext}"
+        path = os.path.join(UPLOAD_DIR, candidate_name)
+        counter += 1
+
+    return candidate_name, path
+
+
+def _rename_cv_filename_from_candidate_name(candidate: Candidate) -> None:
+    """Use parsed full_name as cv_filename for easier tracking in dashboard."""
+    if not candidate.full_name:
+        return
+
+    _, ext = os.path.splitext(candidate.cv_filename or "")
+    ext = ext or ".pdf"
+    safe_name = _safe_filename_component(candidate.full_name)
+    candidate.cv_filename = f"{safe_name}{ext}"
+
+    # File may already be deleted from uploads, but keep filepath metadata aligned.
+    candidate.cv_filepath = os.path.join(UPLOAD_DIR, candidate.cv_filename)
 
 
 def _candidate_analysis_prompts(raw_text: str) -> tuple[str, str]:
@@ -50,7 +107,7 @@ Rules:
 Extract candidate profile fields from this CV raw text.
 
 CV RAW TEXT:
-{raw_text[:15000]}
+{raw_text[:LLM_PROMPT_MAX_CHARS]}
 """
 
     return system_prompt, user_prompt
@@ -79,7 +136,7 @@ def extract_text_from_pdf(filepath: str) -> str:
             line.strip() for line in full_text.splitlines() if line.strip()
         )
 
-        return full_text
+        return sanitize_cv_text(full_text)
 
     except Exception as e:
         raise HTTPException(
@@ -99,10 +156,12 @@ async def save_candidate_to_db(
     Creates a new candidate record in the database with the extracted CV text.
     Status is set to 'pending' — LLM analysis runs separately after this.
     """
+    clean_text = sanitize_cv_text(raw_text)
+
     candidate = Candidate(
         cv_filename=filename,
         cv_filepath=filepath,
-        cv_raw_text=raw_text,
+        cv_raw_text=clean_text,
         status=ProcessingStatus.PENDING
     )
 
@@ -111,6 +170,51 @@ async def save_candidate_to_db(
     await db.refresh(candidate)
 
     return candidate
+
+
+async def _ingest_cv_from_file(
+    db: AsyncSession,
+    filename: str,
+    filepath: str,
+    delete_after_parse: bool = True,
+) -> dict:
+    """
+    Parse one CV file and store one candidate.
+    This guarantees each file is treated as a separate candidate record.
+    """
+    print(f"Parsing CV: {filename}")
+    raw_text = sanitize_cv_text(extract_text_from_pdf(filepath))
+
+    if not raw_text or len(raw_text) < 50:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not extract meaningful text from '{filename}'. It may be scanned or image-based."
+        )
+
+    print(f"Extracted {len(raw_text)} characters from {filename}")
+
+    candidate = await save_candidate_to_db(
+        db=db,
+        filename=filename,
+        filepath=filepath,
+        raw_text=raw_text
+    )
+
+    print(f"Saved candidate ID {candidate.id} to database")
+
+    if delete_after_parse:
+        try:
+            os.remove(filepath)
+            print(f"Deleted parsed CV from uploads: {filepath}")
+        except Exception as e:
+            print(f"Failed to delete file {filepath}: {e}")
+
+    return {
+        "candidate_id": candidate.id,
+        "filename": filename,
+        "characters_extracted": len(raw_text),
+        "status": candidate.status,
+    }
 
 
 @router.post("/upload")
@@ -131,46 +235,138 @@ async def upload_and_parse_cv(
     # Ensure upload directory exists
     os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-    # Save the file
-    filepath = os.path.join(UPLOAD_DIR, file.filename)
+    # Save the file with a unique path
+    stored_filename, filepath = _unique_upload_path(file.filename)
     with open(filepath, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    # Extract raw text from PDF
-    print(f"Parsing CV: {file.filename}")
-    raw_text = extract_text_from_pdf(filepath)
-
-    if not raw_text or len(raw_text) < 50:
-        raise HTTPException(
-            status_code=422,
-            detail="Could not extract meaningful text from this PDF. It may be scanned or image-based."
-        )
-
-    print(f"Extracted {len(raw_text)} characters from {file.filename}")
-
-    # Save to database
-    candidate = await save_candidate_to_db(
+    result = await _ingest_cv_from_file(
         db=db,
-        filename=file.filename,
+        filename=stored_filename,
         filepath=filepath,
-        raw_text=raw_text
+        delete_after_parse=True,
     )
-
-    print(f"Saved candidate ID {candidate.id} to database")
-
-    try:
-        os.remove(filepath)
-        print(f"Deleted parsed CV from uploads: {filepath}")
-    except Exception as e:
-        print(f"Failed to delete file {filepath}: {e}")
 
     return {
         "success": True,
-        "candidate_id": candidate.id,
-        "filename": file.filename,
-        "characters_extracted": len(raw_text),
-        "status": candidate.status,
-        "message": f"CV uploaded and parsed successfully. Candidate ID: {candidate.id}"
+        **result,
+        "message": f"CV uploaded and parsed successfully. Candidate ID: {result['candidate_id']}"
+    }
+
+
+@router.post("/upload/bulk")
+async def bulk_upload_and_parse_cv(
+    files: list[UploadFile] = File(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Bulk upload endpoint: each PDF is parsed and stored as a separate candidate.
+    This prevents token blowups from combining multiple CVs into one analysis payload.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided.")
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    results: list[dict] = []
+
+    for file in files:
+        if not file.filename.lower().endswith(".pdf"):
+            results.append(
+                {
+                    "filename": file.filename,
+                    "success": False,
+                    "error": "Only PDF files are supported.",
+                }
+            )
+            continue
+
+        stored_filename, filepath = _unique_upload_path(file.filename)
+        with open(filepath, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        try:
+            parsed_result = await _ingest_cv_from_file(
+                db=db,
+                filename=stored_filename,
+                filepath=filepath,
+                delete_after_parse=True,
+            )
+            results.append({"success": True, **parsed_result})
+        except Exception as e:
+            results.append(
+                {
+                    "filename": stored_filename,
+                    "success": False,
+                    "error": str(e),
+                }
+            )
+
+    processed = len([r for r in results if r.get("success")])
+    failed = len(results) - processed
+
+    return {
+        "success": failed == 0,
+        "total_received": len(files),
+        "processed": processed,
+        "failed": failed,
+        "results": results,
+    }
+
+
+@router.post("/ingest/folder")
+async def ingest_folder_cvs(
+    folder_path: str = UPLOAD_DIR,
+    delete_after_parse: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Reads all PDFs from a folder and ingests each as a separate candidate.
+    """
+    if not os.path.isdir(folder_path):
+        raise HTTPException(status_code=404, detail=f"Folder not found: {folder_path}")
+
+    pdf_files = sorted(
+        [name for name in os.listdir(folder_path) if name.lower().endswith(".pdf")]
+    )
+    if not pdf_files:
+        return {
+            "success": True,
+            "folder_path": folder_path,
+            "total_found": 0,
+            "processed": 0,
+            "failed": 0,
+            "results": [],
+        }
+
+    results: list[dict] = []
+    for filename in pdf_files:
+        filepath = os.path.join(folder_path, filename)
+        try:
+            parsed_result = await _ingest_cv_from_file(
+                db=db,
+                filename=filename,
+                filepath=filepath,
+                delete_after_parse=delete_after_parse,
+            )
+            results.append({"success": True, **parsed_result})
+        except Exception as e:
+            results.append(
+                {
+                    "filename": filename,
+                    "success": False,
+                    "error": str(e),
+                }
+            )
+
+    processed = len([r for r in results if r.get("success")])
+    failed = len(results) - processed
+    return {
+        "success": failed == 0,
+        "folder_path": folder_path,
+        "total_found": len(pdf_files),
+        "processed": processed,
+        "failed": failed,
+        "results": results,
     }
 
 # ENDPOINT — POST /cv/parse
@@ -210,43 +406,18 @@ async def parse_cv(
             detail="Only PDF files are supported."
         )
 
-    # Step 2 — Extract raw text from PDF
-    print(f"Parsing CV: {filename}")
-    raw_text = extract_text_from_pdf(filepath)
-
-    if not raw_text or len(raw_text) < 50:
-        raise HTTPException(
-            status_code=422,
-            detail="Could not extract meaningful text from this PDF. It may be scanned or image-based."
-        )
-
-    print(f"Extracted {len(raw_text)} characters from {filename}")
-
-    # Step 3 — Save to database
-    candidate = await save_candidate_to_db(
+    result = await _ingest_cv_from_file(
         db=db,
         filename=filename,
         filepath=filepath,
-        raw_text=raw_text
+        delete_after_parse=True,
     )
-
-    print(f"Saved candidate ID {candidate.id} to database")
-
-    # Step 3.5 — Delete the PDF file after successful processing
-    try:
-        os.remove(filepath)
-        print(f"Deleted parsed CV from uploads: {filepath}")
-    except Exception as e:
-        print(f"Failed to delete file {filepath}: {e}")
 
     # Step 4 — Return response to frontend
     return {
         "success": True,
-        "candidate_id": candidate.id,
-        "filename": filename,
-        "characters_extracted": len(raw_text),
-        "status": candidate.status,
-        "message": f"CV parsed successfully. Candidate ID: {candidate.id}"
+        **result,
+        "message": f"CV parsed successfully. Candidate ID: {result['candidate_id']}"
     }
 
 
@@ -349,7 +520,12 @@ async def analyze_candidate(
 
     try:
         system_prompt, user_prompt = _candidate_analysis_prompts(candidate.cv_raw_text)
-        parsed = await ask_llm(system_prompt=system_prompt, user_prompt=user_prompt, temperature=0.1)
+        parsed = await ask_llm(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.1,
+            max_tokens=LLM_RESPONSE_MAX_TOKENS,
+        )
 
         candidate.full_name = parsed.get("full_name")
         candidate.email = parsed.get("email")
@@ -362,6 +538,8 @@ async def analyze_candidate(
         score = parsed.get("overall_score")
         if isinstance(score, (int, float)):
             candidate.overall_score = max(0.0, min(100.0, float(score)))
+
+        _rename_cv_filename_from_candidate_name(candidate)
 
         candidate.status = ProcessingStatus.COMPLETED
         candidate.processed_at = datetime.utcnow()

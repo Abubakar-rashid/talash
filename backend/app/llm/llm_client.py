@@ -49,11 +49,28 @@ def clean_llm_response(text: str) -> str:
 def parse_json_response(text: str) -> dict:
     cleaned = clean_llm_response(text)
     try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError as e:
+        parsed = json.loads(cleaned)
+        if not isinstance(parsed, dict):
+            raise ValueError("LLM JSON response must be an object.")
+        return parsed
+    except json.JSONDecodeError:
+        # Some model responses contain extra text or multiple JSON objects.
+        # Recover by decoding the first JSON value from the first brace/bracket.
+        first_object_start = min(
+            [idx for idx in [cleaned.find("{"), cleaned.find("[")] if idx != -1],
+            default=-1,
+        )
+        if first_object_start != -1:
+            decoder = json.JSONDecoder()
+            try:
+                parsed, _ = decoder.raw_decode(cleaned[first_object_start:])
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+
         raise ValueError(
             f"LLM returned invalid JSON.\n"
-            f"Error: {e}\n"
             f"Raw response (first 500 chars):\n{cleaned[:500]}"
         )
 
@@ -66,7 +83,8 @@ def parse_json_response(text: str) -> dict:
 async def ask_llm(
     system_prompt: str,
     user_prompt: str,
-    temperature: float = 0.1
+    temperature: float = 0.1,
+    max_tokens: int = 512
 ) -> dict:
     """
     Sends a prompt to Groq and returns parsed JSON.
@@ -87,7 +105,7 @@ async def ask_llm(
                 {"role": "user",   "content": user_prompt}
             ],
             temperature=temperature,
-            max_tokens=4096
+            max_tokens=max_tokens
         )
         raw_text = response.choices[0].message.content
         return parse_json_response(raw_text)
@@ -96,10 +114,16 @@ async def ask_llm(
         raise
 
     except Exception as e:
+        error_text = str(e)
+        if "Request too large" in error_text or "rate_limit_exceeded" in error_text or "tokens per minute" in error_text:
+            raise Exception(
+                "Groq request exceeded token limits (TPM/context). "
+                "Reduce input size, lower max_tokens, or use chunked analysis. "
+                f"Original error: {error_text}"
+            )
         raise Exception(
             f"Groq API call failed.\n"
-            f"Check your GROQ_API_KEY in .env\n"
-            f"Error: {str(e)}"
+            f"Error: {error_text}"
         )
 
 
@@ -111,7 +135,8 @@ async def ask_llm(
 async def ask_llm_text(
     system_prompt: str,
     user_prompt: str,
-    temperature: float = 0.5
+    temperature: float = 0.5,
+    max_tokens: int = 512
 ) -> str:
     """
     Same as ask_llm() but returns plain text.
@@ -125,15 +150,21 @@ async def ask_llm_text(
                 {"role": "user",   "content": user_prompt}
             ],
             temperature=temperature,
-            max_tokens=2048
+            max_tokens=max_tokens
         )
         return response.choices[0].message.content.strip()
 
     except Exception as e:
+        error_text = str(e)
+        if "Request too large" in error_text or "rate_limit_exceeded" in error_text or "tokens per minute" in error_text:
+            raise Exception(
+                "Groq request exceeded token limits (TPM/context). "
+                "Reduce input size, lower max_tokens, or use chunked analysis. "
+                f"Original error: {error_text}"
+            )
         raise Exception(
             f"Groq API call failed.\n"
-            f"Check your GROQ_API_KEY in .env\n"
-            f"Error: {str(e)}"
+            f"Error: {error_text}"
         )
 
 
