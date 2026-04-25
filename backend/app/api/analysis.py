@@ -57,7 +57,7 @@ async def run_full_analysis(
     await db.commit()
 
     try:
-        education = await analyze_education(raw)
+        education = await analyze_education(raw, candidate_universities=candidate.universities)
         experience = await analyze_experience(raw)
         research = await analyze_research(raw)
 

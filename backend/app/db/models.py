@@ -4,10 +4,10 @@ from sqlalchemy.sql import func
 from app.db.database import Base
 
 class ProcessingStatus(str, enum.Enum):
-    PENDING = "pending"
-    PROCESSING = "processing"
-    COMPLETED = "completed"
-    FAILED = "failed"
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 class Candidate(Base):
     __tablename__ = "candidates"
@@ -19,6 +19,7 @@ class Candidate(Base):
     address = Column(Text, nullable=True)
     linkedin_url = Column(String, nullable=True)
     nationality = Column(String, nullable=True)
+    universities = Column(Text, nullable=True)
     cv_filename = Column(String, nullable=False)
     cv_filepath = Column(String, nullable=False)
     cv_raw_text = Column(Text, nullable=True)

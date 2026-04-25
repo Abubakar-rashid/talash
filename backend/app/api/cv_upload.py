@@ -94,6 +94,7 @@ Use exactly this JSON schema:
   "address": string|null,  # currently living address of the candidate if available
   "linkedin_url": string|null,  # linkedin profile of the candidate, must have linkedin in the url dont mix it wiht github link or any other link
   "nationality": string|null,
+  "universities": string|null,  # Names of the universities or educational institutions attended by the candidate
   "overall_summary": string|null,
   "overall_score": number|null
 }
@@ -479,6 +480,7 @@ async def get_candidate(
         "address": candidate.address,
         "linkedin_url": candidate.linkedin_url,
         "nationality": candidate.nationality,
+        "universities": candidate.universities,
         "filename": candidate.cv_filename,
         "status": candidate.status,
         "overall_summary": candidate.overall_summary,
@@ -534,6 +536,7 @@ async def analyze_candidate(
         candidate.address = parsed.get("address")
         candidate.linkedin_url = parsed.get("linkedin_url")
         candidate.nationality = parsed.get("nationality")
+        candidate.universities = parsed.get("universities")
         candidate.overall_summary = parsed.get("overall_summary")
 
         score = parsed.get("overall_score")
