@@ -2,20 +2,25 @@
 
 Talent Acquisition & Learning Automation for Smart Hiring.
 
-TALASH is an in-progress full-stack project for CV ingestion, parsing, and candidate profiling. It currently supports PDF upload, text extraction, candidate storage, and LLM-based profile analysis.
+TALASH is a full-stack CV ingestion, parsing, analysis, and candidate profiling system, implemented with end-to-end backend analysis, candidate-wise dashboards, research profiling, exports, and a comparative analytics UI.
 
-## Project Status (So Far)
+## Project Status
 
-Implemented now:
+Implemented features:
 - FastAPI backend with async PostgreSQL connection
-- PDF upload and text extraction (PyMuPDF)
-- Candidate records stored in database
+- PDF upload, bulk upload, and folder-based ingestion
+- Candidate records stored in the database
 - LLM analysis via Groq to extract structured profile fields
-- React + Vite frontend for upload and candidate dashboard
-
-Planned/partially scaffolded:
-- Expanded research and analytics schema in `database_structure.csv`
-- Additional modules under `backend/app/modules/`
+- Education, experience, research, and missing-information analysis
+- Candidate summary generation and personalized draft email creation
+- React + Vite frontend for upload, insights, and analytics dashboards
+- Tabular outputs, sortable comparisons, and charts/graphs for candidate review
+- Folder-based CV processing for multiple candidates
+- Candidate-wise tabular outputs and comparative dashboard views
+- Graphical analytics with chart-based summaries
+- Candidate summary generation
+- Personalized missing-information email drafting
+- Structured CSV/XLSX export for one or all candidates
 
 ## Tech Stack
 
@@ -44,7 +49,7 @@ talash/
   frontend/
     src/
   database_structure.csv
-```
+  ```
 
 ## Prerequisites
 
@@ -108,10 +113,14 @@ Base prefix: `/cv`
 - `POST /cv/upload`
   - Upload a PDF CV (`multipart/form-data`, field: `file`)
   - Extracts text and creates a candidate record
+- `POST /cv/upload/bulk`
+  - Upload and process multiple PDF CVs in one request
+- `POST /cv/ingest/folder`
+  - Parse PDFs from a server-side folder path
 - `POST /cv/parse`
   - Parses a PDF already present in uploads folder (filename input)
 - `GET /cv/candidates`
-  - List all candidate records (summary)
+  - List candidate records with pagination, filtering, and sorting
 - `GET /cv/candidate/{candidate_id}`
   - Get full candidate details, including raw text
 - `POST /cv/candidate/{candidate_id}/analyze`
@@ -121,11 +130,21 @@ Base prefix: `/cv`
 - `POST /cv/preprocess/export`
   - Generate structured preprocessing exports for all usable candidates
 
+Base prefix: `/analysis`
+
+- `POST /analysis/candidate/{candidate_id}/full`
+  - Run the complete multi-module analysis pipeline
+- `GET /analysis/candidate/{candidate_id}`
+  - Retrieve stored analysis results
+- `POST /analysis/candidate/{candidate_id}/email`
+  - Regenerate the missing-information email draft
+
 ## Database Notes
 
 - The running backend currently relies on the `candidates` table model in `backend/app/db/models.py`.
 - A broader target schema for future modules exists in `database_structure.csv`.
 - Structured preprocessing exports are written under `backend/exports/` by default.
+- Research analysis includes co-author metrics, research domains, publication diversity, and research scoring.
 
 ## Quick Test Commands
 
@@ -135,11 +154,3 @@ From `talash/backend`:
 python test_db.py
 python app/test_llm.py
 ```
-
-## Next Milestones
-
-- Add migrations (Alembic flow) for the full schema
-- Implement remaining extraction/analysis modules   
-- Add authentication and role-based access
-- Improve frontend UX and API configuration via environment variables
-- Add automated tests for API and parsing pipeline

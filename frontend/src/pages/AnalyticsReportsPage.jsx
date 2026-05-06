@@ -1,5 +1,9 @@
 import { useMemo, useState } from 'react';
 import {
+  PieChart, Pie, Cell,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+} from 'recharts';
+import {
   detectMissingInformation,
   draftMissingInfoEmail,
   extractEducationSignals,
@@ -20,6 +24,16 @@ function scoreBand(score) {
   return 'low';
 }
 
+const COLORS = {
+  completed: '#10b981',
+  processing: '#f59e0b',
+  pending: '#6b7280',
+  failed: '#ef4444',
+  high: '#10b981',
+  medium: '#f59e0b',
+  low: '#ef4444',
+};
+
 export default function AnalyticsReportsPage({
   candidates,
   loading,
@@ -28,6 +42,8 @@ export default function AnalyticsReportsPage({
   selectCandidate,
 }) {
   const [copied, setCopied] = useState(false);
+  const [sortBy, setSortBy] = useState('name');
+  const [sortOrder, setSortOrder] = useState('asc');
 
   const reportRows = useMemo(
     () =>
@@ -47,6 +63,24 @@ export default function AnalyticsReportsPage({
     [candidates],
   );
 
+  // Sort rows
+  const sortedRows = useMemo(() => {
+    const rows = [...reportRows];
+    rows.sort((a, b) => {
+      let aVal = a[sortBy];
+      let bVal = b[sortBy];
+      
+      if (typeof aVal === 'string') {
+        aVal = aVal.toLowerCase();
+        bVal = bVal.toLowerCase();
+        return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+      }
+      
+      return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+    return rows;
+  }, [reportRows, sortBy, sortOrder]);
+
   const chartStats = useMemo(() => {
     const total = reportRows.length;
     const completed = reportRows.filter((row) => row.status === 'completed').length;
@@ -59,6 +93,7 @@ export default function AnalyticsReportsPage({
     const scoreHigh = reportRows.filter((row) => scoreBand(row.score) === 'high').length;
     const scoreMedium = reportRows.filter((row) => scoreBand(row.score) === 'medium').length;
     const scoreLow = reportRows.filter((row) => scoreBand(row.score) === 'low').length;
+    const scoreUnknown = total - scoreHigh - scoreMedium - scoreLow;
 
     return {
       total,
@@ -70,8 +105,25 @@ export default function AnalyticsReportsPage({
       scoreHigh,
       scoreMedium,
       scoreLow,
+      scoreUnknown,
     };
   }, [reportRows]);
+
+  // Data for pie chart - Status
+  const statusChartData = useMemo(() => [
+    { name: 'Completed', value: chartStats.completed, fill: COLORS.completed },
+    { name: 'Processing', value: chartStats.processing, fill: COLORS.processing },
+    { name: 'Pending', value: chartStats.pending, fill: COLORS.pending },
+    { name: 'Failed', value: chartStats.failed, fill: COLORS.failed },
+  ].filter(d => d.value > 0), [chartStats]);
+
+  // Data for bar chart - Score Bands
+  const scoreChartData = useMemo(() => [
+    { name: 'High (75+)', value: chartStats.scoreHigh, fill: COLORS.high },
+    { name: 'Medium (50-74)', value: chartStats.scoreMedium, fill: COLORS.medium },
+    { name: 'Low (0-49)', value: chartStats.scoreLow, fill: COLORS.low },
+    { name: 'Unknown', value: chartStats.scoreUnknown, fill: '#d1d5db' },
+  ].filter(d => d.value > 0), [chartStats]);
 
   const details = useMemo(() => {
     if (!selectedCandidate) return null;
@@ -99,6 +151,15 @@ export default function AnalyticsReportsPage({
     }
   }
 
+  function handleSort(field) {
+    if (sortBy === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(field);
+      setSortOrder('asc');
+    }
+  }
+
   return (
     <section className="page-grid">
       <section className="summary-strip reveal">
@@ -114,59 +175,72 @@ export default function AnalyticsReportsPage({
           <p>Profiles Missing Data</p>
           <strong>{chartStats.withMissing}</strong>
         </article>
+        <article className="summary-tile">
+          <p>High Scoring</p>
+          <strong>{chartStats.scoreHigh}</strong>
+        </article>
       </section>
 
       <section className="panel reveal delay-1">
-        <h2>Initial Charts</h2>
-        <div className="chart-grid">
-          <article className="chart-card">
+        <h2>Analytics Dashboard</h2>
+        <div className="charts-grid">
+          {/* Status Distribution Pie Chart */}
+          <div className="chart-container">
             <h3>Status Distribution</h3>
-            <div className="metric-row">
-              <span>Completed</span>
-              <div className="bar-track"><div className="bar-fill success" style={{ width: `${pct(chartStats.completed, chartStats.total)}%` }} /></div>
-              <strong>{chartStats.completed}</strong>
-            </div>
-            <div className="metric-row">
-              <span>Processing</span>
-              <div className="bar-track"><div className="bar-fill warning" style={{ width: `${pct(chartStats.processing, chartStats.total)}%` }} /></div>
-              <strong>{chartStats.processing}</strong>
-            </div>
-            <div className="metric-row">
-              <span>Pending</span>
-              <div className="bar-track"><div className="bar-fill neutral" style={{ width: `${pct(chartStats.pending, chartStats.total)}%` }} /></div>
-              <strong>{chartStats.pending}</strong>
-            </div>
-            <div className="metric-row">
-              <span>Failed</span>
-              <div className="bar-track"><div className="bar-fill danger" style={{ width: `${pct(chartStats.failed, chartStats.total)}%` }} /></div>
-              <strong>{chartStats.failed}</strong>
-            </div>
-          </article>
+            {statusChartData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie
+                    data={statusChartData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    outerRadius={80}
+                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  >
+                    {statusChartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.fill} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <p>No data available</p>
+            )}
+          </div>
 
-          <article className="chart-card">
-            <h3>Score Bands</h3>
-            <div className="metric-row">
-              <span>High (75-100)</span>
-              <div className="bar-track"><div className="bar-fill success" style={{ width: `${pct(chartStats.scoreHigh, chartStats.total)}%` }} /></div>
-              <strong>{chartStats.scoreHigh}</strong>
-            </div>
-            <div className="metric-row">
-              <span>Medium (50-74)</span>
-              <div className="bar-track"><div className="bar-fill warning" style={{ width: `${pct(chartStats.scoreMedium, chartStats.total)}%` }} /></div>
-              <strong>{chartStats.scoreMedium}</strong>
-            </div>
-            <div className="metric-row">
-              <span>Low (0-49)</span>
-              <div className="bar-track"><div className="bar-fill danger" style={{ width: `${pct(chartStats.scoreLow, chartStats.total)}%` }} /></div>
-              <strong>{chartStats.scoreLow}</strong>
-            </div>
-          </article>
+          {/* Score Distribution Bar Chart */}
+          <div className="chart-container">
+            <h3>Score Distribution</h3>
+            {scoreChartData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart
+                  data={scoreChartData}
+                  margin={{ top: 20, right: 30, left: 0, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="value" fill="#3b82f6" radius={[8, 8, 0, 0]}>
+                    {scoreChartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.fill} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <p>No data available</p>
+            )}
+          </div>
         </div>
       </section>
 
       <div className="candidate-layout reveal delay-2">
         <article className="panel">
-          <h2>Tabular Output</h2>
+          <h2>Candidate Comparison Table</h2>
           {loading && <p>Loading candidate records...</p>}
           {!loading && reportRows.length === 0 && <p>No candidate records available yet.</p>}
 
@@ -175,27 +249,28 @@ export default function AnalyticsReportsPage({
               <table className="report-table">
                 <thead>
                   <tr>
-                    <th>ID</th>
-                    <th>Candidate</th>
-                    <th>Email</th>
-                    <th>Status</th>
-                    <th>Score</th>
-                    <th>Missing Fields</th>
-                    <th>Uploaded</th>
+                    <th onClick={() => handleSort('id')}>ID {sortBy === 'id' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
+                    <th onClick={() => handleSort('name')}>Candidate {sortBy === 'name' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
+                    <th onClick={() => handleSort('email')}>Email {sortBy === 'email' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
+                    <th onClick={() => handleSort('status')}>Status {sortBy === 'status' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
+                    <th onClick={() => handleSort('score')}>Score {sortBy === 'score' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
+                    <th onClick={() => handleSort('missingCount')}>Missing {sortBy === 'missingCount' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
+                    <th onClick={() => handleSort('uploadedAt')}>Uploaded {sortBy === 'uploadedAt' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {reportRows.map((row) => (
+                  {sortedRows.map((row) => (
                     <tr
                       key={row.id}
                       className={selectedCandidateId === row.id ? 'active-row' : ''}
                       onClick={() => selectCandidate(row.id)}
+                      style={{ cursor: 'pointer' }}
                     >
                       <td>{row.id}</td>
                       <td>{row.name}</td>
-                      <td>{row.email}</td>
-                      <td>{row.status}</td>
-                      <td>{row.score ?? '—'}</td>
+                      <td className="email-cell">{row.email}</td>
+                      <td><span className={`status-badge status-${row.status}`}>{row.status}</span></td>
+                      <td><strong>{row.score ?? '—'}</strong></td>
                       <td>{row.missingCount}</td>
                       <td>{row.uploadedAt ? new Date(row.uploadedAt).toLocaleString() : '—'}</td>
                     </tr>
@@ -207,29 +282,41 @@ export default function AnalyticsReportsPage({
         </article>
 
         <article className="panel">
-          <h2>Personalized Draft Email</h2>
-          {!selectedCandidate && <p>Select a candidate row to view draft email and missing-info profile.</p>}
+          <h2>Personalized Missing-Info Email</h2>
+          {!selectedCandidate && <p className="muted">Select a candidate row to view profile details and draft email.</p>}
 
           {selectedCandidate && details && (
             <div className="page-grid">
               <section className="info-box">
                 <h3>{selectedCandidate.full_name || selectedCandidate.filename || `Candidate ${selectedCandidate.id}`}</h3>
-                <p><strong>Missing Fields:</strong> {details.missingFields.join(', ') || 'No key fields missing'}</p>
-                <div className="tag-row">
-                  {details.education.detectedDegrees.map((degree) => (
-                    <span className="tag" key={degree}>{degree}</span>
-                  ))}
-                  {details.research.topicHints.map((topic) => (
-                    <span className="tag" key={topic}>{topic}</span>
-                  ))}
-                </div>
+                <p><strong>Missing Fields:</strong> {details.missingFields.length === 0 ? 'Complete ✓' : details.missingFields.join(', ')}</p>
+                {details.education.detectedDegrees.length > 0 && (
+                  <div>
+                    <p><strong>Education:</strong></p>
+                    <div className="tag-row">
+                      {details.education.detectedDegrees.map((degree) => (
+                        <span className="tag" key={degree}>{degree}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {details.research.topicHints.length > 0 && (
+                  <div>
+                    <p><strong>Research Areas:</strong></p>
+                    <div className="tag-row">
+                      {details.research.topicHints.map((topic) => (
+                        <span className="tag" key={topic}>{topic}</span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </section>
 
               <section className="email-panel">
                 <div className="email-toolbar">
                   <p className="muted">Ready-to-send draft</p>
                   <button type="button" className="btn compact" onClick={copyDraftEmail}>
-                    {copied ? 'Copied' : 'Copy Email'}
+                    {copied ? '✓ Copied' : 'Copy Email'}
                   </button>
                 </div>
                 <pre className="email-draft-pretty">{details.emailDraft}</pre>

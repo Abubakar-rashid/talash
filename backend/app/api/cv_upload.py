@@ -426,25 +426,72 @@ async def parse_cv(
 # ENDPOINT — GET /cv/candidates
 # Returns all candidates in the database (for dashboard)
 @router.get("/candidates")
-async def get_all_candidates(db: AsyncSession = Depends(get_db)):
+async def get_all_candidates(
+    db: AsyncSession = Depends(get_db),
+    skip: int = 0,
+    limit: int = 100,
+    status: str | None = None,
+    sort_by: str = "uploaded_at",
+    sort_order: str = "desc"
+):
     """
     Returns a list of all candidates with their basic info and status.
-    Used by the frontend dashboard to show uploaded CVs.
+    Supports pagination, filtering by status, and sorting.
+    
+    Query parameters:
+    - skip: Number of records to skip (default: 0)
+    - limit: Number of records to return (default: 100, max: 1000)
+    - status: Filter by status (PENDING, PROCESSING, COMPLETED, FAILED)
+    - sort_by: Sort field (uploaded_at, full_name, overall_score)
+    - sort_order: Sort order (asc, desc)
     """
-    result = await db.execute(
-        select(Candidate).order_by(Candidate.uploaded_at.desc())
-    )
+    limit = min(limit, 1000)  # Cap at 1000
+    
+    # Build query
+    query = select(Candidate)
+    
+    # Apply status filter if provided
+    if status:
+        query = query.where(Candidate.status == status)
+    
+    # Apply sorting
+    sort_column = {
+        "uploaded_at": Candidate.uploaded_at,
+        "full_name": Candidate.full_name,
+        "overall_score": Candidate.overall_score,
+    }.get(sort_by, Candidate.uploaded_at)
+    
+    if sort_order.lower() == "asc":
+        query = query.order_by(sort_column.asc())
+    else:
+        query = query.order_by(sort_column.desc())
+    
+    # Get total count for pagination
+    count_result = await db.execute(select(Candidate))
+    total_count = len(count_result.scalars().all())
+    
+    # Apply pagination
+    query = query.offset(skip).limit(limit)
+    
+    result = await db.execute(query)
     candidates = result.scalars().all()
 
     return {
-        "total": len(candidates),
+        "total": total_count,
+        "count": len(candidates),
+        "skip": skip,
+        "limit": limit,
+        "status_filter": status,
         "candidates": [
             {
                 "id": c.id,
                 "full_name": c.full_name or "Not yet extracted",
+                "email": c.email or None,
                 "filename": c.cv_filename,
-                "status": c.status,
-                "uploaded_at": c.uploaded_at,
+                "status": c.status.value if hasattr(c.status, 'value') else str(c.status),
+                "overall_score": c.overall_score,
+                "uploaded_at": c.uploaded_at.isoformat() if c.uploaded_at else None,
+                "processed_at": c.processed_at.isoformat() if c.processed_at else None,
             }
             for c in candidates
         ]
