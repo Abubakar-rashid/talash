@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import {
   PieChart, Pie, Cell,
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  LineChart, Line, Area, AreaChart
 } from 'recharts';
 import {
   detectMissingInformation,
@@ -44,6 +45,12 @@ export default function AnalyticsReportsPage({
   const [copied, setCopied] = useState(false);
   const [sortBy, setSortBy] = useState('name');
   const [sortOrder, setSortOrder] = useState('asc');
+  const [emailRegenLoading, setEmailRegenLoading] = useState(false);
+  const [emailRegeneratedAt, setEmailRegeneratedAt] = useState(null);
+  const [comparisonCandidateIds, setComparisonCandidateIds] = useState([]);
+  const [showComparisonModal, setShowComparisonModal] = useState(false);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [showStatistics, setShowStatistics] = useState(false);
 
   const reportRows = useMemo(
     () =>
@@ -151,6 +158,82 @@ export default function AnalyticsReportsPage({
     }
   }
 
+  async function regenerateEmail() {
+    if (!selectedCandidate?.id) return;
+    setEmailRegenLoading(true);
+    try {
+      const resp = await fetch(`http://localhost:8000/analysis/candidate/${selectedCandidate.id}/email`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (resp.ok) {
+        const result = await resp.json();
+        setEmailRegeneratedAt(new Date().toLocaleString());
+        // Refresh details to show new email
+        setTimeout(() => {
+          selectCandidate(selectedCandidate.id);
+        }, 500);
+      }
+    } catch (err) {
+      console.error('Failed to regenerate email:', err);
+    } finally {
+      setEmailRegenLoading(false);
+    }
+  }
+
+  async function batchExportEmails() {
+    const rowsToExport = comparisonCandidateIds.length > 0
+      ? sortedRows.filter(r => comparisonCandidateIds.includes(r.id))
+      : sortedRows;
+    
+    if (rowsToExport.length === 0) {
+      alert('Please select candidates to export');
+      return;
+    }
+
+    try {
+      // Fetch email for each candidate
+      const emailLines = [];
+      for (const row of rowsToExport) {
+        const candidate = candidates.find(c => c.id === row.id);
+        if (candidate) {
+          const missing = detectMissingInformation(candidate);
+          const email = draftMissingInfoEmail(candidate, missing);
+          emailLines.push(`=== CANDIDATE: ${row.name} ===`);
+          emailLines.push(`Email: ${row.email}`);
+          emailLines.push(`Score: ${row.score ?? 'N/A'}`);
+          emailLines.push('');
+          emailLines.push(email);
+          emailLines.push('');
+          emailLines.push('---');
+          emailLines.push('');
+        }
+      }
+
+      // Create download
+      const text = emailLines.join('\n');
+      const blob = new Blob([text], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `emails_${new Date().toISOString().slice(0, 10)}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Export failed:', err);
+    }
+  }
+
+  function toggleComparisonCandidate(candidateId) {
+    if (comparisonCandidateIds.includes(candidateId)) {
+      setComparisonCandidateIds(comparisonCandidateIds.filter(id => id !== candidateId));
+    } else {
+      setComparisonCandidateIds([...comparisonCandidateIds, candidateId]);
+    }
+  }
+
   function handleSort(field) {
     if (sortBy === field) {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
@@ -159,6 +242,49 @@ export default function AnalyticsReportsPage({
       setSortOrder('asc');
     }
   }
+
+  // Leaderboard data: ranked by score
+  const leaderboardData = useMemo(() => {
+    return sortedRows
+      .filter(r => r.score != null)
+      .sort((a, b) => b.score - a.score)
+      .map((row, idx) => ({
+        ...row,
+        rank: idx + 1,
+        medal: idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '',
+      }));
+  }, [sortedRows]);
+
+  // Comparison data
+  const comparisonRows = useMemo(() => {
+    return sortedRows.filter(r => comparisonCandidateIds.includes(r.id));
+  }, [sortedRows, comparisonCandidateIds]);
+
+  // Cohort statistics
+  const cohortStats = useMemo(() => {
+    const scores = reportRows.filter(r => r.score != null).map(r => r.score);
+    const avgScore = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : 0;
+    const maxScore = scores.length > 0 ? Math.max(...scores) : 0;
+    const minScore = scores.length > 0 ? Math.min(...scores) : 0;
+    
+    const experienceYears = reportRows
+      .map(r => extractExperienceSignals(candidates.find(c => c.id === r.id)?.raw_text || ''))
+      .map(e => e.totalYears || 0);
+    const avgExp = experienceYears.length > 0 
+      ? (experienceYears.reduce((a, b) => a + b, 0) / experienceYears.length).toFixed(1)
+      : 0;
+
+    return {
+      totalCandidates: reportRows.length,
+      avgScore,
+      maxScore,
+      minScore,
+      avgExp,
+      completionRate: pct(chartStats.completed, chartStats.total),
+      withData: chartStats.completed,
+      incomplete: chartStats.pending + chartStats.processing,
+    };
+  }, [reportRows, candidates, chartStats]);
 
   return (
     <section className="page-grid">
@@ -241,14 +367,40 @@ export default function AnalyticsReportsPage({
       <div className="candidate-layout reveal delay-2">
         <article className="panel">
           <h2>Candidate Comparison Table</h2>
+          <div className="toolbar">
+            <button className="btn compact" onClick={() => setShowLeaderboard(!showLeaderboard)}>
+              {showLeaderboard ? '← Back to Table' : '🏆 Leaderboard'}
+            </button>
+            <button className="btn compact" onClick={() => setShowStatistics(!showStatistics)}>
+              {showStatistics ? '← Back to Table' : '📊 Statistics'}
+            </button>
+            {comparisonCandidateIds.length > 0 && (
+              <button className="btn compact" onClick={() => setShowComparisonModal(true)}>
+                ⚖️ Compare {comparisonCandidateIds.length}
+              </button>
+            )}
+            <button className="btn compact" onClick={batchExportEmails}>
+              📥 Export Emails
+            </button>
+          </div>
+
           {loading && <p>Loading candidate records...</p>}
           {!loading && reportRows.length === 0 && <p>No candidate records available yet.</p>}
 
-          {!loading && reportRows.length > 0 && (
+          {!loading && !showLeaderboard && !showStatistics && reportRows.length > 0 && (
             <div className="table-scroll">
               <table className="report-table">
                 <thead>
                   <tr>
+                    <th style={{ width: '40px' }}>
+                      <input type="checkbox" onChange={(e) => {
+                        if (e.target.checked) {
+                          setComparisonCandidateIds(sortedRows.map(r => r.id));
+                        } else {
+                          setComparisonCandidateIds([]);
+                        }
+                      }} />
+                    </th>
                     <th onClick={() => handleSort('id')}>ID {sortBy === 'id' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
                     <th onClick={() => handleSort('name')}>Candidate {sortBy === 'name' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
                     <th onClick={() => handleSort('email')}>Email {sortBy === 'email' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
@@ -263,20 +415,75 @@ export default function AnalyticsReportsPage({
                     <tr
                       key={row.id}
                       className={selectedCandidateId === row.id ? 'active-row' : ''}
-                      onClick={() => selectCandidate(row.id)}
                       style={{ cursor: 'pointer' }}
                     >
-                      <td>{row.id}</td>
-                      <td>{row.name}</td>
-                      <td className="email-cell">{row.email}</td>
-                      <td><span className={`status-badge status-${row.status}`}>{row.status}</span></td>
-                      <td><strong>{row.score ?? '—'}</strong></td>
-                      <td>{row.missingCount}</td>
-                      <td>{row.uploadedAt ? new Date(row.uploadedAt).toLocaleString() : '—'}</td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <input 
+                          type="checkbox"
+                          checked={comparisonCandidateIds.includes(row.id)}
+                          onChange={() => toggleComparisonCandidate(row.id)}
+                        />
+                      </td>
+                      <td onClick={() => selectCandidate(row.id)}>{row.id}</td>
+                      <td onClick={() => selectCandidate(row.id)}>{row.name}</td>
+                      <td onClick={() => selectCandidate(row.id)} className="email-cell">{row.email}</td>
+                      <td onClick={() => selectCandidate(row.id)}><span className={`status-badge status-${row.status}`}>{row.status}</span></td>
+                      <td onClick={() => selectCandidate(row.id)}><strong>{row.score ?? '—'}</strong></td>
+                      <td onClick={() => selectCandidate(row.id)}>{row.missingCount}</td>
+                      <td onClick={() => selectCandidate(row.id)}>{row.uploadedAt ? new Date(row.uploadedAt).toLocaleString() : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {!loading && showLeaderboard && leaderboardData.length > 0 && (
+            <div className="leaderboard">
+              <h3>🏆 Candidate Leaderboard (by Score)</h3>
+              <div className="leaderboard-list">
+                {leaderboardData.map((row) => (
+                  <div key={row.id} className="leaderboard-row" onClick={() => selectCandidate(row.id)} style={{ cursor: 'pointer' }}>
+                    <span className="rank">{row.medal || `#${row.rank}`}</span>
+                    <span className="name">{row.name}</span>
+                    <span className="score" style={{ color: row.score >= 75 ? '#10b981' : row.score >= 50 ? '#f59e0b' : '#ef4444' }}>
+                      {row.score.toFixed(1)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!loading && showStatistics && (
+            <div className="statistics-panel">
+              <h3>📊 Cohort Statistics</h3>
+              <div className="stats-grid">
+                <div className="stat-card">
+                  <p className="stat-label">Total Candidates</p>
+                  <p className="stat-value">{cohortStats.totalCandidates}</p>
+                </div>
+                <div className="stat-card">
+                  <p className="stat-label">Avg Score</p>
+                  <p className="stat-value">{cohortStats.avgScore}</p>
+                </div>
+                <div className="stat-card">
+                  <p className="stat-label">Score Range</p>
+                  <p className="stat-value">{cohortStats.minScore} — {cohortStats.maxScore}</p>
+                </div>
+                <div className="stat-card">
+                  <p className="stat-label">Avg Experience</p>
+                  <p className="stat-value">{cohortStats.avgExp} yrs</p>
+                </div>
+                <div className="stat-card">
+                  <p className="stat-label">Completion Rate</p>
+                  <p className="stat-value">{cohortStats.completionRate}%</p>
+                </div>
+                <div className="stat-card">
+                  <p className="stat-label">Analyzed</p>
+                  <p className="stat-value">{cohortStats.withData} / {cohortStats.totalCandidates}</p>
+                </div>
+              </div>
             </div>
           )}
         </article>
@@ -314,10 +521,22 @@ export default function AnalyticsReportsPage({
 
               <section className="email-panel">
                 <div className="email-toolbar">
-                  <p className="muted">Ready-to-send draft</p>
-                  <button type="button" className="btn compact" onClick={copyDraftEmail}>
-                    {copied ? '✓ Copied' : 'Copy Email'}
-                  </button>
+                  <div>
+                    <p className="muted">Ready-to-send draft{emailRegeneratedAt && ` (updated: ${emailRegeneratedAt})`}</p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button 
+                      type="button" 
+                      className="btn compact" 
+                      onClick={regenerateEmail}
+                      disabled={emailRegenLoading}
+                    >
+                      {emailRegenLoading ? '⟳ Regenerating...' : '🔄 Regenerate'}
+                    </button>
+                    <button type="button" className="btn compact" onClick={copyDraftEmail}>
+                      {copied ? '✓ Copied' : '📋 Copy'}
+                    </button>
+                  </div>
                 </div>
                 <pre className="email-draft-pretty">{details.emailDraft}</pre>
               </section>
@@ -325,6 +544,43 @@ export default function AnalyticsReportsPage({
           )}
         </article>
       </div>
+      
+      {showComparisonModal && comparisonRows.length > 0 && (
+        <div className="comparison-modal" onClick={() => setShowComparisonModal(false)}>
+          <div className="comparison-modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="comparison-modal-header">
+              <h2>⚖️ Candidate Comparison</h2>
+              <button className="comparison-modal-close" onClick={() => setShowComparisonModal(false)}>×</button>
+            </div>
+            <table className="comparison-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Score</th>
+                  <th>Status</th>
+                  <th>Missing</th>
+                  <th>Uploaded</th>
+                </tr>
+              </thead>
+              <tbody>
+                {comparisonRows.map((row) => (
+                  <tr key={row.id}>
+                    <td><strong>{row.name}</strong></td>
+                    <td>{row.email}</td>
+                    <td style={{ fontWeight: 'bold', color: row.score >= 75 ? '#10b981' : row.score >= 50 ? '#f59e0b' : '#ef4444' }}>
+                      {row.score?.toFixed(1) ?? '—'}
+                    </td>
+                    <td><span className={`status-badge status-${row.status}`}>{row.status}</span></td>
+                    <td>{row.missingCount}</td>
+                    <td style={{ fontSize: '12px' }}>{row.uploadedAt ? new Date(row.uploadedAt).toLocaleDateString() : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
