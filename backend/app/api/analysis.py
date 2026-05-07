@@ -16,8 +16,72 @@ from app.modules.education_analysis import analyze_education
 from app.modules.experience_analysis import analyze_experience
 from app.modules.missing_info import detect_missing_fields, draft_missing_info_email
 from app.modules.research_analysis import analyze_research
+from app.llm.llm_client import ask_llm
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
+
+
+# =============================================================================
+# LLM ROUTING - Multi-Provider Analysis
+# =============================================================================
+# Option A: Task-Based Specialization
+# - Groq: education, experience, missing_info (heuristic-based)
+# - Gemini: research enrichment, advanced analysis
+# =============================================================================
+
+async def enrich_research_with_gemini(raw_text: str, base_research: dict) -> dict:
+    """
+    Enrich research analysis with Gemini for better understanding of:
+    - Publication quality and impact
+    - Research domain expertise
+    - Citation patterns and influence
+    - Interdisciplinary research
+    """
+    if not raw_text or not base_research.get("publications"):
+        return base_research
+    
+    try:
+        system_prompt = """
+You are an expert research analyst. Analyze the CV text and provide deeper insights into the candidate's research profile.
+Return ONLY valid JSON (no markdown, no prose).
+{
+  "research_quality_assessment": "string|null",
+  "domain_expertise_score": number|null (0-100),
+  "citation_influence": "string|null",
+  "interdisciplinary_focus": [string],
+  "publication_strategy": "string|null",
+  "research_maturity": "string|null",
+  "collaboration_strength": "string|null"
+}
+"""
+        user_prompt = f"""
+Based on this CV, assess the candidate's research profile:
+
+{raw_text[:3000]}
+
+Existing research data:
+{json.dumps(base_research, indent=2)[:1000]}
+
+Provide deeper insights on research quality, impact, and expertise level.
+"""
+        
+        enrichment = await ask_llm(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.3,
+            max_tokens=400,
+            provider="gemini"
+        )
+        
+        # Merge enrichment into base research
+        if enrichment:
+            base_research["gemini_enrichment"] = enrichment
+        return base_research
+        
+    except Exception as e:
+        # Silently fail on enrichment - don't block main analysis
+        print(f"Warning: Gemini enrichment failed: {e}")
+        return base_research
 
 
 def _load_json_col(value: str | None) -> dict | list | None:
@@ -60,6 +124,9 @@ async def run_full_analysis(
         education = await analyze_education(raw, candidate_universities=candidate.universities)
         experience = await analyze_experience(raw)
         research = await analyze_research(raw)
+        
+        # Enrich research analysis with Gemini for deeper insights
+        research = await enrich_research_with_gemini(raw, research)
 
         candidate_snapshot = {
             "full_name": candidate.full_name,

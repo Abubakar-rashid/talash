@@ -570,11 +570,15 @@ async def analyze_candidate(
 
     try:
         system_prompt, user_prompt = _candidate_analysis_prompts(candidate.cv_raw_text)
+        # MULTI-LLM STRATEGY (Option A):
+        # - Groq for structured data extraction (personal info)
+        # - See analysis.py for Gemini-powered research enrichment
         parsed = await ask_llm(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.1,
             max_tokens=LLM_RESPONSE_MAX_TOKENS,
+            provider="groq"  # Groq is ideal for structured data extraction
         )
 
         candidate.full_name = parsed.get("full_name")
