@@ -91,3 +91,7 @@ async def init_db():
         await conn.execute(text("ALTER TABLE candidates ADD COLUMN IF NOT EXISTS research_json TEXT"))
         await conn.execute(text("ALTER TABLE candidates ADD COLUMN IF NOT EXISTS missing_info_json TEXT"))
         await conn.execute(text("ALTER TABLE candidates ADD COLUMN IF NOT EXISTS missing_info_email TEXT"))
+        await conn.execute(text("ALTER TABLE candidates ADD COLUMN IF NOT EXISTS skill_alignment_json TEXT"))
+        await conn.execute(text("ALTER TABLE candidates ADD COLUMN IF NOT EXISTS supervision_json TEXT"))
+        await conn.execute(text("ALTER TABLE candidates ADD COLUMN IF NOT EXISTS books_json TEXT"))
+        await conn.execute(text("ALTER TABLE candidates ADD COLUMN IF NOT EXISTS patents_json TEXT"))

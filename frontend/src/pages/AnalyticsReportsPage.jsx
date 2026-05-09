@@ -11,6 +11,7 @@ import {
   extractExperienceSignals,
   extractResearchSignals,
 } from '../lib/profileParsers';
+import { downloadCandidatePDF } from '../lib/api';
 
 function pct(value, total) {
   if (!total) return 0;
@@ -48,6 +49,7 @@ export default function AnalyticsReportsPage({
   const [emailRegenLoading, setEmailRegenLoading] = useState(false);
   const [emailRegeneratedAt, setEmailRegeneratedAt] = useState(null);
   const [comparisonCandidateIds, setComparisonCandidateIds] = useState([]);
+  const [pdfDownloadLoading, setPdfDownloadLoading] = useState(false);
   const [showComparisonModal, setShowComparisonModal] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [showStatistics, setShowStatistics] = useState(false);
@@ -178,6 +180,20 @@ export default function AnalyticsReportsPage({
       console.error('Failed to regenerate email:', err);
     } finally {
       setEmailRegenLoading(false);
+    }
+  }
+
+  async function downloadPDF() {
+    if (!selectedCandidate?.id) return;
+    setPdfDownloadLoading(true);
+    try {
+      const candidateName = selectedCandidate.full_name || `candidate_${selectedCandidate.id}`;
+      await downloadCandidatePDF(selectedCandidate.id, candidateName);
+    } catch (err) {
+      console.error('Failed to download PDF:', err);
+      alert(`Failed to download PDF: ${err.message}`);
+    } finally {
+      setPdfDownloadLoading(false);
     }
   }
 
@@ -535,6 +551,14 @@ export default function AnalyticsReportsPage({
                     </button>
                     <button type="button" className="btn compact" onClick={copyDraftEmail}>
                       {copied ? '✓ Copied' : '📋 Copy'}
+                    </button>
+                    <button 
+                      type="button" 
+                      className="btn compact" 
+                      onClick={downloadPDF}
+                      disabled={pdfDownloadLoading}
+                    >
+                      {pdfDownloadLoading ? '⟳ Generating...' : '📄 PDF Report'}
                     </button>
                   </div>
                 </div>

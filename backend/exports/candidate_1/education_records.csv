@@ -1,0 +1,5 @@
+board_or_affiliation,candidate_id,cgpa_normalized,degree_level,degree_title,institution_name,percentage_normalized,performance_note,raw_result,specialization,year_end,year_start
+,1,,BS / BSc,Bachelor of Science in Data Science,,,,Bachelor of Science in Data Science,,,
+,1,,MS / MPhil,gesture classification and LSTMs for dynamic gesture recognition,,,,gesture classification and LSTMs for dynamic gesture recognition,,,
+,1,,HSSC / Intermediate,"pipelines, real-time progress tracking, and an analytics dashboard",,,,"pipelines, real-time progress tracking, and an analytics dashboard",,,
+,1,,MS / MPhil,•Built a procedural city generation system in Unity 6 using procedural generation algorithms to dynamically,,,,•Built a procedural city generation system in Unity 6 using procedural generation algorithms to dynamically,,,

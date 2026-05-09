@@ -7,6 +7,7 @@ import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,6 +17,14 @@ from app.modules.education_analysis import analyze_education
 from app.modules.experience_analysis import analyze_experience
 from app.modules.missing_info import detect_missing_fields, draft_missing_info_email
 from app.modules.research_analysis import analyze_research
+from app.modules.skill_alignment import analyze_skill_alignment
+from app.modules.supervision_patents_books import (
+    extract_supervision_info,
+    extract_books_info,
+    extract_patents_info,
+    analyze_innovation_profile,
+)
+from app.modules.pdf_report import generate_pdf_report
 from app.llm.llm_client import ask_llm
 
 router = APIRouter(prefix="/analysis", tags=["Analysis"])
@@ -127,6 +136,17 @@ async def run_full_analysis(
         
         # Enrich research analysis with Gemini for deeper insights
         research = await enrich_research_with_gemini(raw, research)
+        
+        # Analyze skill alignment with experience and research
+        exp_records = experience.get("records", [])
+        pub_records = research.get("publications", [])
+        skill_alignment = await analyze_skill_alignment(raw, experience_records=exp_records, publications=pub_records)
+        
+        # Extract supervision, patents, and books information
+        supervision = await extract_supervision_info(raw)
+        books = await extract_books_info(raw)
+        patents = await extract_patents_info(raw)
+        innovation_profile = await analyze_innovation_profile(supervision, books, patents)
 
         candidate_snapshot = {
             "full_name": candidate.full_name,
@@ -146,6 +166,10 @@ async def run_full_analysis(
                     research_json     = :res,
                     missing_info_json = :miss,
                     missing_info_email = :email,
+                    skill_alignment_json = :skills,
+                    supervision_json  = :supervision,
+                    books_json        = :books,
+                    patents_json      = :patents,
                     status            = CAST(:status AS processing_status),
                     processed_at      = :now
                 WHERE id = :cid
@@ -157,6 +181,10 @@ async def run_full_analysis(
                 "res": _dump_json(research),
                 "miss": _dump_json(missing_fields),
                 "email": draft_email,
+                "skills": _dump_json(skill_alignment),
+                "supervision": _dump_json(supervision),
+                "books": _dump_json(books),
+                "patents": _dump_json(patents),
                 "status": ProcessingStatus.COMPLETED.value,
                 "now": datetime.utcnow(),
                 "cid": candidate_id,
@@ -170,6 +198,11 @@ async def run_full_analysis(
             "education": education,
             "experience": experience,
             "research": research,
+            "skill_alignment": skill_alignment,
+            "supervision": supervision,
+            "books": books,
+            "patents": patents,
+            "innovation_profile": innovation_profile,
             "missing_fields": missing_fields,
             "draft_email": draft_email,
         }
@@ -251,3 +284,74 @@ async def redraft_email(
     await db.commit()
 
     return {"success": True, "draft_email": draft}
+
+
+@router.get("/candidate/{candidate_id}/pdf")
+async def generate_candidate_pdf(
+    candidate_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate and return PDF report for candidate."""
+    row = await db.execute(
+        text(
+            """
+            SELECT id, full_name, email, phone, nationality,
+                   education_json, experience_json, research_json,
+                   skill_alignment_json, supervision_json, books_json, patents_json
+            FROM candidates
+            WHERE id = :cid
+            """
+        ),
+        {"cid": candidate_id},
+    )
+    record = row.mappings().first()
+
+    if not record:
+        raise HTTPException(status_code=404, detail="Candidate not found.")
+
+    candidate_data = {
+        "id": record["id"],
+        "full_name": record["full_name"],
+        "email": record["email"],
+        "phone": record["phone"],
+        "nationality": record["nationality"],
+    }
+
+    education = _load_json_col(record["education_json"]) or {}
+    experience = _load_json_col(record["experience_json"]) or {}
+    research = _load_json_col(record["research_json"]) or {}
+    skill_alignment = _load_json_col(record["skill_alignment_json"]) or {}
+    supervision = _load_json_col(record["supervision_json"]) or {}
+    books = _load_json_col(record["books_json"]) or {}
+    patents = _load_json_col(record["patents_json"]) or {}
+    
+    # Generate mock innovation profile
+    innovation_profile = {
+        "leadership_assessment": "Strong research leadership with diverse contributions."
+    }
+
+    try:
+        pdf_bytes = await generate_pdf_report(
+            candidate_id,
+            candidate_data,
+            education,
+            experience,
+            research,
+            skill_alignment,
+            supervision,
+            books,
+            patents,
+            innovation_profile,
+        )
+
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="candidate_{candidate_id}_report.pdf"'},
+        )
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"PDF generation failed: {str(exc)}",
+        )

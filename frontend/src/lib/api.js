@@ -121,4 +121,23 @@ export async function redraftCandidateEmail(candidateId) {
   return parseResponse(response);
 }
 
+export async function downloadCandidatePDF(candidateId, candidateName) {
+  const response = await fetch(`${API_BASE_URL}/analysis/candidate/${candidateId}/pdf`);
+  
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error?.detail || 'PDF download failed');
+  }
+  
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${candidateName || `candidate_${candidateId}`}_report.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(link);
+}
+
 export { API_BASE_URL };

@@ -5,6 +5,7 @@ from collections import Counter
 from typing import Any
 
 from app.modules.preprocessing import extract_publication_records
+from app.modules.topic_diversity import analyze_research_diversity
 
 
 def _extract_authors_from_line(line: str) -> list[str]:
@@ -123,6 +124,9 @@ async def analyze_research(raw_text: str) -> dict[str, Any]:
     # Publication diversity
     diversity_metrics = _calculate_publication_diversity(publications)
     
+    # Topic diversity and co-author network analysis
+    topic_diversity_analysis = analyze_research_diversity(publications)
+    
     # Calculate research activity score (0-100)
     research_score = min(100, (
         (journal_count * 15) +  # Journals worth more
@@ -163,6 +167,7 @@ async def analyze_research(raw_text: str) -> dict[str, Any]:
             "is_partial_processing": False,  # Now complete!
         },
         "diversity_metrics": diversity_metrics,
+        "topic_diversity_analysis": topic_diversity_analysis,
         "research_profile_assessment": {
             "has_publications": len(publications) > 0,
             "publication_focus": diversity_metrics.get("most_common_type"),

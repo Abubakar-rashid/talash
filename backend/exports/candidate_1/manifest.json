@@ -1,0 +1,7 @@
+{
+  "candidate_id": "1",
+  "filename": "Qasim_Ahmed.pdf",
+  "generated_at": "2026-05-09T06:26:14",
+  "workbook_path": "exports/candidate_1/candidate_1_structured_profile.xlsx",
+  "tables": "{\"personal_info\": \"exports/candidate_1/personal_info.csv\", \"education_records\": \"exports/candidate_1/education_records.csv\", \"experience_records\": \"exports/candidate_1/experience_records.csv\", \"skills\": \"exports/candidate_1/skills.csv\", \"publications\": \"exports/candidate_1/publications.csv\", \"gaps\": \"exports/candidate_1/gaps.csv\"}"
+}
