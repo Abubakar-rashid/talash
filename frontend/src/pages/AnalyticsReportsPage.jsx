@@ -42,6 +42,7 @@ export default function AnalyticsReportsPage({
   selectedCandidate,
   selectedCandidateId,
   selectCandidate,
+  notify,
 }) {
   const [copied, setCopied] = useState(false);
   const [sortBy, setSortBy] = useState('name');
@@ -155,8 +156,10 @@ export default function AnalyticsReportsPage({
       await navigator.clipboard.writeText(details.emailDraft);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
+      notify?.('Email draft copied to clipboard.', 'success');
     } catch {
       setCopied(false);
+      notify?.('Failed to copy email draft.', 'error');
     }
   }
 
@@ -171,6 +174,7 @@ export default function AnalyticsReportsPage({
       if (resp.ok) {
         const result = await resp.json();
         setEmailRegeneratedAt(new Date().toLocaleString());
+        notify?.('Email draft regenerated successfully.', 'success');
         // Refresh details to show new email
         setTimeout(() => {
           selectCandidate(selectedCandidate.id);
@@ -178,6 +182,7 @@ export default function AnalyticsReportsPage({
       }
     } catch (err) {
       console.error('Failed to regenerate email:', err);
+      notify?.(err.message || 'Failed to regenerate email.', 'error');
     } finally {
       setEmailRegenLoading(false);
     }
@@ -189,9 +194,10 @@ export default function AnalyticsReportsPage({
     try {
       const candidateName = selectedCandidate.full_name || `candidate_${selectedCandidate.id}`;
       await downloadCandidatePDF(selectedCandidate.id, candidateName);
+      notify?.(`PDF report downloaded for ${candidateName}.`, 'success');
     } catch (err) {
       console.error('Failed to download PDF:', err);
-      alert(`Failed to download PDF: ${err.message}`);
+      notify?.(`Failed to download PDF: ${err.message}`, 'error');
     } finally {
       setPdfDownloadLoading(false);
     }
@@ -203,7 +209,7 @@ export default function AnalyticsReportsPage({
       : sortedRows;
     
     if (rowsToExport.length === 0) {
-      alert('Please select candidates to export');
+      notify?.('Please select candidates to export.', 'error');
       return;
     }
 
@@ -237,7 +243,9 @@ export default function AnalyticsReportsPage({
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      notify?.(`Exported ${rowsToExport.length} email draft(s).`, 'success');
     } catch (err) {
+      notify?.(`Batch export failed: ${err.message}`, 'error');
       console.error('Export failed:', err);
     }
   }
@@ -557,6 +565,7 @@ export default function AnalyticsReportsPage({
                       className="btn compact" 
                       onClick={downloadPDF}
                       disabled={pdfDownloadLoading}
+                      aria-label="Download candidate PDF report"
                     >
                       {pdfDownloadLoading ? '⟳ Generating...' : '📄 PDF Report'}
                     </button>

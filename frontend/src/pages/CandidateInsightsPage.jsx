@@ -24,6 +24,7 @@ export default function CandidateInsightsPage({
   onAnalyzeSelected,
   activeAnalyses,
   refreshCandidates,
+  notify,
 }) {
   const selectedId = selectedCandidateId || selectedCandidate?.id;
   const [preprocessStatus, setPreprocessStatus] = useState('');
@@ -87,8 +88,10 @@ export default function CandidateInsightsPage({
     try {
       const result = await preprocessCandidate(selectedCandidate.id);
       setPreprocessStatus(`Preprocessing complete. Files are saved in ${result.exports.directory}.`);
+      notify?.(`Preprocessing complete for ${selectedCandidate.full_name || 'candidate'}.`, 'success');
     } catch (error) {
       setPreprocessStatus(error.message || 'Failed to preprocess candidate.');
+      notify?.(error.message || 'Failed to preprocess candidate.', 'error');
     }
   }
 
@@ -103,8 +106,10 @@ export default function CandidateInsightsPage({
       const analysis = await getCandidateAnalysis(selectedCandidate.id);
       setStoredAnalysis(analysis);
       setAnalysisStatus('Full backend analysis completed and loaded.');
+      notify?.(`Full analysis completed for ${selectedCandidate.full_name || 'candidate'}.`, 'success');
     } catch (error) {
       setAnalysisStatus(error.message || 'Failed to run full backend analysis.');
+      notify?.(error.message || 'Failed to run full backend analysis.', 'error');
     }
   }
 
@@ -119,8 +124,10 @@ export default function CandidateInsightsPage({
       const analysis = await getCandidateAnalysis(selectedCandidate.id);
       setStoredAnalysis(analysis);
       setAnalysisStatus('Draft email refreshed from backend analysis.');
+      notify?.('Draft email refreshed.', 'success');
     } catch (error) {
       setAnalysisStatus(error.message || 'Failed to redraft email.');
+      notify?.(error.message || 'Failed to redraft email.', 'error');
     }
   }
 
@@ -224,7 +231,12 @@ export default function CandidateInsightsPage({
                 <button type="button" className="btn" onClick={handleRedraftEmail} style={{ marginLeft: 12 }}>
                   Refresh Draft Email
                 </button>
-                {analysisLoading && <p className="status-spacing small-text">Loading stored backend analysis...</p>}
+                {(analysisLoading || activeAnalyses[selectedCandidate.id]) && (
+                  <div className="progress-block status-spacing">
+                    <div className="progress-track"><span style={{ width: '72%' }} /></div>
+                    <p className="muted small-text">Running analysis and loading results...</p>
+                  </div>
+                )}
                 {analysisStatus && <p className="status-spacing small-text">{analysisStatus}</p>}
               </section>
 

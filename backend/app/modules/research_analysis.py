@@ -5,6 +5,7 @@ from collections import Counter
 from typing import Any
 
 from app.modules.preprocessing import extract_publication_records
+from app.modules.publication_rankings import enrich_publication_rankings
 from app.modules.topic_diversity import analyze_research_diversity
 
 
@@ -126,6 +127,9 @@ async def analyze_research(raw_text: str) -> dict[str, Any]:
     
     # Topic diversity and co-author network analysis
     topic_diversity_analysis = analyze_research_diversity(publications)
+
+    # External publication ranking enrichment (QS / Scopus / WoS / CORE when configured)
+    publication_rankings = enrich_publication_rankings(publications)
     
     # Calculate research activity score (0-100)
     research_score = min(100, (
@@ -168,6 +172,7 @@ async def analyze_research(raw_text: str) -> dict[str, Any]:
         },
         "diversity_metrics": diversity_metrics,
         "topic_diversity_analysis": topic_diversity_analysis,
+        "publication_rankings": publication_rankings,
         "research_profile_assessment": {
             "has_publications": len(publications) > 0,
             "publication_focus": diversity_metrics.get("most_common_type"),

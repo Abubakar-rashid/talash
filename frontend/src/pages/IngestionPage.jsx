@@ -3,7 +3,6 @@ import {
   ingestCandidateFolder,
   parseCandidateByFilename,
   uploadCandidateCV,
-  uploadCandidateCVBulk,
 } from '../lib/api';
 
 function pickPdfFiles(fileList) {
@@ -19,11 +18,32 @@ export default function IngestionPage({ refreshCandidates }) {
   const [deleteAfterFolderParse, setDeleteAfterFolderParse] = useState(false);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState('');
+  const [dragActive, setDragActive] = useState(false);
+  const [progress, setProgress] = useState(0);
 
   const totalQueued = useMemo(
     () => (singleFile ? 1 : 0) + bulkFiles.length + folderFiles.length,
     [singleFile, bulkFiles.length, folderFiles.length],
   );
+
+  function emit(message, variant = 'info') {
+    if (typeof window !== 'undefined' && typeof window.__talashNotify === 'function') {
+      window.__talashNotify(message, variant);
+    }
+  }
+
+  function setQueuedFiles(files) {
+    const pdfFiles = pickPdfFiles(files);
+    if (pdfFiles.length === 1) {
+      setSingleFile(pdfFiles[0]);
+      setBulkFiles([]);
+      setFolderFiles([]);
+    } else if (pdfFiles.length > 1) {
+      setBulkFiles(pdfFiles);
+      setSingleFile(null);
+      setFolderFiles([]);
+    }
+  }
 
   async function uploadOne(file) {
     const result = await uploadCandidateCV(file);
@@ -33,22 +53,37 @@ export default function IngestionPage({ refreshCandidates }) {
   async function uploadMany(files, label) {
     if (!files.length) {
       setStatus(`No PDF files selected for ${label}.`);
+      emit(`No PDF files selected for ${label}.`, 'error');
       return;
     }
 
     setRunning(true);
+    setProgress(5);
     setStatus(`Uploading ${files.length} file(s) from ${label}...`);
 
     try {
-      const result = await uploadCandidateCVBulk(files);
-      setStatus(
-        `Uploaded ${result.processed}/${result.total_received} file(s) from ${label}. Failed: ${result.failed}.`,
-      );
+      let processed = 0;
+      let failed = 0;
+
+      for (const file of files) {
+        try {
+          await uploadOne(file);
+          processed += 1;
+        } catch {
+          failed += 1;
+        }
+        setProgress(Math.round((processed + failed) / files.length * 100));
+      }
+
+      setStatus(`Uploaded ${processed}/${files.length} file(s) from ${label}. Failed: ${failed}.`);
+      emit(`Uploaded ${processed}/${files.length} PDF(s).`, failed ? 'error' : 'success');
       await refreshCandidates?.();
     } catch (error) {
       setStatus(`Bulk upload failed: ${error.message}`);
+      emit(`Bulk upload failed: ${error.message}`, 'error');
     } finally {
       setRunning(false);
+      setProgress(0);
     }
   }
 
@@ -59,6 +94,7 @@ export default function IngestionPage({ refreshCandidates }) {
     }
 
     setRunning(true);
+    setProgress(10);
     setStatus(`Reading and parsing PDFs from server folder: ${serverFolderPath} ...`);
 
     try {
@@ -66,11 +102,14 @@ export default function IngestionPage({ refreshCandidates }) {
       setStatus(
         `Folder ingestion complete. Processed ${result.processed}/${result.total_found}. Failed: ${result.failed}.`,
       );
+      emit(`Folder ingestion complete: ${result.processed}/${result.total_found}.`, result.failed ? 'error' : 'success');
       await refreshCandidates?.();
     } catch (error) {
       setStatus(`Folder ingestion failed: ${error.message}`);
+      emit(`Folder ingestion failed: ${error.message}`, 'error');
     } finally {
       setRunning(false);
+      setProgress(0);
     }
   }
 
@@ -81,15 +120,19 @@ export default function IngestionPage({ refreshCandidates }) {
     }
 
     setRunning(true);
+    setProgress(15);
     try {
       const name = await uploadOne(singleFile);
       setStatus(`Single CV uploaded successfully: ${name}`);
+      emit(`Single CV uploaded successfully: ${name}`, 'success');
       setSingleFile(null);
       await refreshCandidates?.();
     } catch (error) {
       setStatus(`Single upload failed: ${error.message}`);
+      emit(`Single upload failed: ${error.message}`, 'error');
     } finally {
       setRunning(false);
+      setProgress(0);
     }
   }
 
@@ -100,16 +143,36 @@ export default function IngestionPage({ refreshCandidates }) {
     }
 
     setRunning(true);
+    setProgress(20);
     try {
       const result = await parseCandidateByFilename(serverFilename.trim());
       setStatus(`Parsed existing file successfully: ${result.filename}`);
+      emit(`Parsed existing file successfully: ${result.filename}`, 'success');
       setServerFilename('');
       await refreshCandidates?.();
     } catch (error) {
       setStatus(`Parse failed: ${error.message}`);
+      emit(`Parse failed: ${error.message}`, 'error');
     } finally {
       setRunning(false);
+      setProgress(0);
     }
+  }
+
+  function handleDrop(event) {
+    event.preventDefault();
+    setDragActive(false);
+    setQueuedFiles(event.dataTransfer.files);
+    setStatus('Files dropped. Ready to upload.');
+  }
+
+  function handleDragOver(event) {
+    event.preventDefault();
+    setDragActive(true);
+  }
+
+  function handleDragLeave() {
+    setDragActive(false);
   }
 
   return (
@@ -117,6 +180,19 @@ export default function IngestionPage({ refreshCandidates }) {
       <article className="panel reveal">
         <h2>CV Ingestion</h2>
         <p className="muted">Use one place for single upload, bulk upload, folder upload, and parsing existing uploaded files.</p>
+
+        <div
+          className={`drop-zone ${dragActive ? 'active' : ''}`}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          role="button"
+          tabIndex={0}
+          aria-label="Drop PDF files here to queue them for upload"
+        >
+          <strong>Drop PDF files here</strong>
+          <p className="muted small-text">Drag one PDF to queue a single upload, or drop multiple PDFs to queue bulk upload.</p>
+        </div>
 
         <div className="upload-card">
           <h3>Single CV Upload</h3>
@@ -126,6 +202,7 @@ export default function IngestionPage({ refreshCandidates }) {
               accept=".pdf"
               onChange={(event) => setSingleFile(event.target.files?.[0] || null)}
               disabled={running}
+              aria-label="Choose one PDF file to upload"
             />
             <button className="btn compact" type="button" onClick={handleSingleUpload} disabled={running || !singleFile}>
               Upload Single CV
@@ -142,6 +219,7 @@ export default function IngestionPage({ refreshCandidates }) {
               multiple
               onChange={(event) => setBulkFiles(pickPdfFiles(event.target.files))}
               disabled={running}
+              aria-label="Choose multiple PDF files to upload"
             />
             <button className="btn compact" type="button" onClick={() => uploadMany(bulkFiles, 'bulk selection')} disabled={running || bulkFiles.length === 0}>
               Upload Bulk CVs ({bulkFiles.length})
@@ -165,6 +243,7 @@ export default function IngestionPage({ refreshCandidates }) {
               directory="true"
               onChange={(event) => setFolderFiles(pickPdfFiles(event.target.files))}
               disabled={running}
+              aria-label="Choose a folder of PDF files to upload"
             />
             <button className="btn compact" type="button" onClick={() => uploadMany(folderFiles, 'folder selection')} disabled={running || folderFiles.length === 0}>
               Upload Folder PDFs ({folderFiles.length})
@@ -182,6 +261,7 @@ export default function IngestionPage({ refreshCandidates }) {
               placeholder="uploads"
               disabled={running}
               className="text-input"
+              aria-label="Server folder path"
             />
             <button
               className="btn compact"
@@ -213,6 +293,7 @@ export default function IngestionPage({ refreshCandidates }) {
               placeholder="example_cv.pdf"
               disabled={running}
               className="text-input"
+              aria-label="Filename already on server"
             />
             <button className="btn compact" type="button" onClick={handleParseExisting} disabled={running || !serverFilename.trim()}>
               Parse Existing File
@@ -222,6 +303,12 @@ export default function IngestionPage({ refreshCandidates }) {
         </div>
 
         <p className="muted small-text">Total currently selected files: {totalQueued}</p>
+        {running && (
+          <div className="progress-block" aria-label="Upload progress">
+            <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
+            <p className="muted small-text">{progress > 0 ? `Processing... ${progress}%` : 'Processing...'}</p>
+          </div>
+        )}
         {status && <p className={status.toLowerCase().includes('failed') ? 'error-text' : 'success-text'}>{status}</p>}
       </article>
     </section>
