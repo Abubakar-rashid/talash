@@ -4,6 +4,7 @@ from typing import Any
 
 from app.modules.preprocessing import extract_education_records
 from app.modules.qs_ranking_matcher import get_qs_ranking
+from app.modules.the_ranking_matcher import get_the_ranking
 
 
 async def analyze_education(raw_text: str, candidate_universities: str | None = None) -> dict[str, Any]:
@@ -21,9 +22,11 @@ async def analyze_education(raw_text: str, candidate_universities: str | None = 
     )
 
     qs_ranking = None
+    the_ranking = None
     institution_name = None
     if candidate_universities:
         institution_name, qs_ranking = get_qs_ranking(candidate_universities)
+        _, the_ranking = get_the_ranking(candidate_universities)
 
     gaps: list[dict[str, Any]] = []
     for idx in range(1, len(years)):
@@ -40,6 +43,7 @@ async def analyze_education(raw_text: str, candidate_universities: str | None = 
     if records:
         records[-1]['institution_name'] = institution_name or candidate_universities
         records[-1]['qs_ranking'] = qs_ranking
+        records[-1]['the_ranking'] = the_ranking
 
     return {
         "records": records,
@@ -51,6 +55,11 @@ async def analyze_education(raw_text: str, candidate_universities: str | None = 
             "searched_university": candidate_universities,
             "matched_institution": institution_name,
             "qs_ranking": qs_ranking
+        },
+        "the_ranking_info": {
+            "searched_university": candidate_universities,
+            "matched_institution": institution_name,
+            "the_ranking": the_ranking,
         },
         "summary": {
             "records_count": len(records),

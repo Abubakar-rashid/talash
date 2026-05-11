@@ -33,6 +33,10 @@ class Candidate(Base):
     research_json = Column(Text, nullable=True)
     missing_info_json = Column(Text, nullable=True)
     missing_info_email = Column(Text, nullable=True)
+    skill_alignment_json = Column(Text, nullable=True)
+    supervision_json = Column(Text, nullable=True)
+    books_json = Column(Text, nullable=True)
+    patents_json = Column(Text, nullable=True)
     
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
     processed_at = Column(DateTime(timezone=True), nullable=True)

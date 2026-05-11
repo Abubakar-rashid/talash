@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.modules.preprocessing import extract_education_records, extract_experience_records
+from app.modules.preprocessing import detect_gaps, extract_education_records, extract_experience_records
 
 PRODUCTIVE_ACTIVITY_KEYWORDS = {
     "higher education": ["ms", "mphil", "phd", "masters", "degree", "university"],
@@ -78,6 +78,7 @@ async def analyze_experience(raw_text: str) -> dict[str, Any]:
     """
     education_records = extract_education_records(raw_text)
     experience_records = extract_experience_records(raw_text)
+    gap_records = detect_gaps(raw_text, education_records, experience_records)
 
     education_periods: list[dict[str, Any]] = []
     for edu in education_records:
@@ -167,6 +168,7 @@ async def analyze_experience(raw_text: str) -> dict[str, Any]:
 
     return {
         "records": experience_records,
+        "gap_records": gap_records,
         "timeline_checks": {
             "education_employment_overlaps": education_employment_overlaps,
             "job_overlaps": job_overlaps,
@@ -175,6 +177,7 @@ async def analyze_experience(raw_text: str) -> dict[str, Any]:
         },
         "summary": {
             "records_count": len(experience_records),
+            "gap_records_count": len(gap_records),
             "education_employment_overlap_count": len(education_employment_overlaps),
             "job_overlap_count": len(job_overlaps),
             "professional_gap_count": len(professional_gaps),

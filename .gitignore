@@ -22,6 +22,8 @@ backend/.env
 *.log
 backend/uploads/
 uploads/
+backend/exports/
+exports/
 
 # node
 node_modules/
