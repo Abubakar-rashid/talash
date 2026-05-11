@@ -47,8 +47,10 @@ def detect_missing_fields(
     return sorted(set(missing))
 
 
-async def draft_missing_info_email(full_name: str | None, missing_fields: list[str]) -> str:
-    candidate_name = full_name or "Candidate"
+from app.llm.llm_client import ask_llm_text
+
+async def draft_missing_info_email(candidate_snapshot: dict[str, Any], missing_fields: list[str]) -> str:
+    candidate_name = candidate_snapshot.get("full_name") or "Candidate"
     if not missing_fields:
         return (
             f"Subject: TALASH Profile Update Confirmation\n\n"
@@ -59,14 +61,34 @@ async def draft_missing_info_email(full_name: str | None, missing_fields: list[s
             "TALASH Recruitment Team"
         )
 
-    bullet_list = "\n".join(f"- {item}" for item in missing_fields)
-    return (
-        "Subject: Request for Missing Information - TALASH Profile Review\n\n"
-        f"Dear {candidate_name},\n\n"
-        "Thank you for sharing your CV. To complete your profile evaluation, "
-        "please provide the following missing details:\n\n"
-        f"{bullet_list}\n\n"
-        "You may reply with the details directly or share an updated CV.\n\n"
-        "Best regards,\n"
-        "TALASH Recruitment Team"
-    )
+    given_info_str = "\n".join([f"{k}: {v}" for k, v in candidate_snapshot.items() if v])
+    missing_str = "\n".join(f"- {item}" for item in missing_fields)
+    
+    sys_prompt = "You are an HR assistant named TALASH Recruitment Team writing professional emails to candidates."
+    usr_prompt = f"""
+Write an email to candidate "{candidate_name}" requesting the missing information for their profile.
+Here is the information we currently have for them:
+{given_info_str}
+
+Here is the list of missing items we need:
+{missing_str}
+
+Write a polite and professional email asking them to provide these missing items. The subject should be "Request for Missing Information - TALASH Profile Review".
+Do not wrap your email in markdown, just output the raw email content.
+"""
+    try:
+        email = await ask_llm_text(sys_prompt, usr_prompt, temperature=0.5, max_tokens=600)
+        return email
+    except Exception as e:
+        # Fallback to the old logic if LLM fails
+        return (
+            "Subject: Request for Missing Information - TALASH Profile Review\n\n"
+            f"Dear {candidate_name},\n\n"
+            "Thank you for sharing your CV. To complete your profile evaluation, "
+            "please provide the following missing details:\n\n"
+            f"{missing_str}\n\n"
+            "You may reply with the details directly or share an updated CV.\n\n"
+            "Best regards,\n"
+            "TALASH Recruitment Team"
+            f"\n\n[AI generation failed: {str(e)}]"
+        )

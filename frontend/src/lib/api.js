@@ -54,6 +54,22 @@ export async function uploadCandidateCVBulk(files) {
   return parseResponse(response);
 }
 
+/**
+ * Upload a single combined PDF that contains multiple CVs separated by blank pages.
+ * The backend splits it and ingests each segment as a separate candidate.
+ */
+export async function uploadCombinedBulkPDF(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(`${API_BASE_URL}/cv/upload/bulk-combined`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  return parseResponse(response);
+}
+
 export async function ingestCandidateFolder(folderPath, deleteAfterParse = false) {
   const params = new URLSearchParams({
     folder_path: folderPath,
@@ -121,23 +137,24 @@ export async function redraftCandidateEmail(candidateId) {
   return parseResponse(response);
 }
 
-export async function downloadCandidatePDF(candidateId, candidateName) {
-  const response = await fetch(`${API_BASE_URL}/analysis/candidate/${candidateId}/pdf`);
-  
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error?.detail || 'PDF download failed');
-  }
-  
-  const blob = await response.blob();
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `${candidateName || `candidate_${candidateId}`}_report.pdf`;
-  document.body.appendChild(link);
-  link.click();
-  window.URL.revokeObjectURL(url);
-  document.body.removeChild(link);
+/**
+ * Run deep LLM publication analysis for a candidate using the dedicated second Groq key.
+ * Fills publications, journal_details, conference_details, coauthor_analysis, topic_variability tables.
+ */
+export async function runPublicationAnalysis(candidateId) {
+  const response = await fetch(`${API_BASE_URL}/analysis/candidate/${candidateId}/publications`, {
+    method: 'POST',
+  });
+
+  return parseResponse(response);
+}
+
+/**
+ * Fetch cached deep publication analysis results for a candidate.
+ */
+export async function getPublicationAnalysis(candidateId) {
+  const response = await fetch(`${API_BASE_URL}/analysis/candidate/${candidateId}/publications`);
+  return parseResponse(response);
 }
 
 export { API_BASE_URL };

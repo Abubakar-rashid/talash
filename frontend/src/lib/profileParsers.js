@@ -3,8 +3,13 @@ function normalizeWhitespace(text) {
 }
 
 function hasAny(text, terms) {
-  const lower = text.toLowerCase();
-  return terms.some((term) => lower.includes(term));
+  return terms.some((term) => {
+    if (term instanceof RegExp) {
+      return term.test(text);
+    }
+    const lower = text.toLowerCase();
+    return lower.includes(term.toLowerCase());
+  });
 }
 
 export function extractEducationSignals(rawText) {
@@ -21,11 +26,11 @@ export function extractEducationSignals(rawText) {
 
   const degrees = [];
   const checks = [
-    ['SSE/Matric', ['sse', 'matric']],
-    ['HSSC/Intermediate', ['hssc', 'intermediate', 'f.sc', 'fsc']],
-    ['BS/BSc', ['bs ', 'b.s', 'bsc', 'b.sc', 'bachelor']],
-    ['MS/MPhil', ['ms ', 'm.s', 'mphil', 'm.phil', 'master']],
-    ['PhD', ['phd', 'ph.d']],
+    ['SSE/Matric', [/\bsse\b/i, /\bmatric\b/i]],
+    ['HSSC/Intermediate', [/\bhssc\b/i, /\bintermediate\b/i, /\bf\.?sc\b/i]],
+    ['BS/BSc', [/\bbs\b/i, /\bb\.?s\.?\b/i, /\bbsc\b/i, /\bb\.sc\b/i, /\bbachelors?\b/i]],
+    ['MS/MPhil', [/\bms\b/i, /\bm\.?s\.?\b/i, /\bmphil\b/i, /\bm\.phil\b/i, /\bmasters?\b/i]],
+    ['PhD', [/\bphd\b/i, /\bph\.?d\.?\b/i]],
   ];
 
   checks.forEach(([label, terms]) => {
@@ -45,8 +50,29 @@ export function extractEducationSignals(rawText) {
     }
   }
 
+  // Attempt to extract university names
+  const uniRegex = /([A-Z][a-z0-9-]*\s+(?:(?:of|and|the|for|at|in|&|\-)\s+)*)*(?:University|Institute|College)(?:\s+(?:(?:of|and|the|for|at|in|&|\-)\s+)*[A-Z][a-z0-9-]*){0,4}/g;
+  const uniMatches = rawText.match(uniRegex) || [];
+  
+  const detectedUniversities = [...new Set(
+    uniMatches.map(u => {
+      let cleaned = u.trim().replace(/[\s\n\r]+/g, ' ');
+      
+      // Remove common prefix noise that gets swept up in caps matching
+      while (/^(Education|Experience|School|References|Name|Address|Contact|Email|Date|Phone|Profile|Summary|Objective|Skills|Projects|Abubakar-rashid|Abubakar|Rashid|Islamabad)\s+/i.test(cleaned)) {
+        cleaned = cleaned.replace(/^(Education|Experience|School|References|Name|Address|Contact|Email|Date|Phone|Profile|Summary|Objective|Skills|Projects|Abubakar-rashid|Abubakar|Rashid|Islamabad)\s+/i, '').trim();
+      }
+
+      // Remove common suffix noise
+      cleaned = cleaned.replace(/\s+(Islamabad|Lahore|Karachi|Rawalpindi|Pakistan|H-12|Sector|Phase|Road|Street|City)$/i, '').trim();
+      
+      return cleaned;
+    })
+  )].filter(Boolean);
+
   return {
     detectedDegrees: degrees,
+    detectedUniversities,
     hasSchoolData: hasAny(cleaned, ['sse', 'hssc', 'matric', 'intermediate']),
     hasUniversityData: hasAny(cleaned, ['university', 'institute', 'college']),
     hasScoreData: /\b\d{1,2}(\.\d{1,2})?\s*(cgpa|gpa)\b|\b\d{2,3}%\b/i.test(cleaned),
@@ -105,7 +131,7 @@ export function extractExperienceSignals(rawText) {
   };
 }
 
-export function detectMissingInformation(candidate) {
+export function detectMissingInformation(candidate, education) {
   const missing = [];
 
   if (!candidate?.full_name) missing.push('full name');
@@ -116,6 +142,11 @@ export function detectMissingInformation(candidate) {
   const rawText = normalizeWhitespace(candidate?.raw_text);
   if (!/\b(19|20)\d{2}\b/.test(rawText)) missing.push('clear education/employment dates');
   if (!/journal|conference|publication/i.test(rawText)) missing.push('publication details');
+
+  // Add education-related missing information
+  if (education) {
+    if (!education.hasScoreData) missing.push('GPA/CGPA information');
+  }
 
   return missing;
 }

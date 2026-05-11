@@ -1,17 +1,11 @@
 import { useMemo, useState } from 'react';
 import {
-  PieChart, Pie, Cell,
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  LineChart, Line, Area, AreaChart
-} from 'recharts';
-import {
   detectMissingInformation,
   draftMissingInfoEmail,
   extractEducationSignals,
   extractExperienceSignals,
   extractResearchSignals,
 } from '../lib/profileParsers';
-import { downloadCandidatePDF } from '../lib/api';
 
 function pct(value, total) {
   if (!total) return 0;
@@ -26,34 +20,14 @@ function scoreBand(score) {
   return 'low';
 }
 
-const COLORS = {
-  completed: '#10b981',
-  processing: '#f59e0b',
-  pending: '#6b7280',
-  failed: '#ef4444',
-  high: '#10b981',
-  medium: '#f59e0b',
-  low: '#ef4444',
-};
-
 export default function AnalyticsReportsPage({
   candidates,
   loading,
   selectedCandidate,
   selectedCandidateId,
   selectCandidate,
-  notify,
 }) {
   const [copied, setCopied] = useState(false);
-  const [sortBy, setSortBy] = useState('name');
-  const [sortOrder, setSortOrder] = useState('asc');
-  const [emailRegenLoading, setEmailRegenLoading] = useState(false);
-  const [emailRegeneratedAt, setEmailRegeneratedAt] = useState(null);
-  const [comparisonCandidateIds, setComparisonCandidateIds] = useState([]);
-  const [pdfDownloadLoading, setPdfDownloadLoading] = useState(false);
-  const [showComparisonModal, setShowComparisonModal] = useState(false);
-  const [showLeaderboard, setShowLeaderboard] = useState(false);
-  const [showStatistics, setShowStatistics] = useState(false);
 
   const reportRows = useMemo(
     () =>
@@ -73,24 +47,6 @@ export default function AnalyticsReportsPage({
     [candidates],
   );
 
-  // Sort rows
-  const sortedRows = useMemo(() => {
-    const rows = [...reportRows];
-    rows.sort((a, b) => {
-      let aVal = a[sortBy];
-      let bVal = b[sortBy];
-      
-      if (typeof aVal === 'string') {
-        aVal = aVal.toLowerCase();
-        bVal = bVal.toLowerCase();
-        return sortOrder === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-      }
-      
-      return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
-    });
-    return rows;
-  }, [reportRows, sortBy, sortOrder]);
-
   const chartStats = useMemo(() => {
     const total = reportRows.length;
     const completed = reportRows.filter((row) => row.status === 'completed').length;
@@ -103,7 +59,6 @@ export default function AnalyticsReportsPage({
     const scoreHigh = reportRows.filter((row) => scoreBand(row.score) === 'high').length;
     const scoreMedium = reportRows.filter((row) => scoreBand(row.score) === 'medium').length;
     const scoreLow = reportRows.filter((row) => scoreBand(row.score) === 'low').length;
-    const scoreUnknown = total - scoreHigh - scoreMedium - scoreLow;
 
     return {
       total,
@@ -115,25 +70,8 @@ export default function AnalyticsReportsPage({
       scoreHigh,
       scoreMedium,
       scoreLow,
-      scoreUnknown,
     };
   }, [reportRows]);
-
-  // Data for pie chart - Status
-  const statusChartData = useMemo(() => [
-    { name: 'Completed', value: chartStats.completed, fill: COLORS.completed },
-    { name: 'Processing', value: chartStats.processing, fill: COLORS.processing },
-    { name: 'Pending', value: chartStats.pending, fill: COLORS.pending },
-    { name: 'Failed', value: chartStats.failed, fill: COLORS.failed },
-  ].filter(d => d.value > 0), [chartStats]);
-
-  // Data for bar chart - Score Bands
-  const scoreChartData = useMemo(() => [
-    { name: 'High (75+)', value: chartStats.scoreHigh, fill: COLORS.high },
-    { name: 'Medium (50-74)', value: chartStats.scoreMedium, fill: COLORS.medium },
-    { name: 'Low (0-49)', value: chartStats.scoreLow, fill: COLORS.low },
-    { name: 'Unknown', value: chartStats.scoreUnknown, fill: '#d1d5db' },
-  ].filter(d => d.value > 0), [chartStats]);
 
   const details = useMemo(() => {
     if (!selectedCandidate) return null;
@@ -156,159 +94,10 @@ export default function AnalyticsReportsPage({
       await navigator.clipboard.writeText(details.emailDraft);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-      notify?.('Email draft copied to clipboard.', 'success');
     } catch {
       setCopied(false);
-      notify?.('Failed to copy email draft.', 'error');
     }
   }
-
-  async function regenerateEmail() {
-    if (!selectedCandidate?.id) return;
-    setEmailRegenLoading(true);
-    try {
-      const resp = await fetch(`http://localhost:8000/analysis/candidate/${selectedCandidate.id}/email`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      if (resp.ok) {
-        const result = await resp.json();
-        setEmailRegeneratedAt(new Date().toLocaleString());
-        notify?.('Email draft regenerated successfully.', 'success');
-        // Refresh details to show new email
-        setTimeout(() => {
-          selectCandidate(selectedCandidate.id);
-        }, 500);
-      }
-    } catch (err) {
-      console.error('Failed to regenerate email:', err);
-      notify?.(err.message || 'Failed to regenerate email.', 'error');
-    } finally {
-      setEmailRegenLoading(false);
-    }
-  }
-
-  async function downloadPDF() {
-    if (!selectedCandidate?.id) return;
-    setPdfDownloadLoading(true);
-    try {
-      const candidateName = selectedCandidate.full_name || `candidate_${selectedCandidate.id}`;
-      await downloadCandidatePDF(selectedCandidate.id, candidateName);
-      notify?.(`PDF report downloaded for ${candidateName}.`, 'success');
-    } catch (err) {
-      console.error('Failed to download PDF:', err);
-      notify?.(`Failed to download PDF: ${err.message}`, 'error');
-    } finally {
-      setPdfDownloadLoading(false);
-    }
-  }
-
-  async function batchExportEmails() {
-    const rowsToExport = comparisonCandidateIds.length > 0
-      ? sortedRows.filter(r => comparisonCandidateIds.includes(r.id))
-      : sortedRows;
-    
-    if (rowsToExport.length === 0) {
-      notify?.('Please select candidates to export.', 'error');
-      return;
-    }
-
-    try {
-      // Fetch email for each candidate
-      const emailLines = [];
-      for (const row of rowsToExport) {
-        const candidate = candidates.find(c => c.id === row.id);
-        if (candidate) {
-          const missing = detectMissingInformation(candidate);
-          const email = draftMissingInfoEmail(candidate, missing);
-          emailLines.push(`=== CANDIDATE: ${row.name} ===`);
-          emailLines.push(`Email: ${row.email}`);
-          emailLines.push(`Score: ${row.score ?? 'N/A'}`);
-          emailLines.push('');
-          emailLines.push(email);
-          emailLines.push('');
-          emailLines.push('---');
-          emailLines.push('');
-        }
-      }
-
-      // Create download
-      const text = emailLines.join('\n');
-      const blob = new Blob([text], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `emails_${new Date().toISOString().slice(0, 10)}.txt`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      notify?.(`Exported ${rowsToExport.length} email draft(s).`, 'success');
-    } catch (err) {
-      notify?.(`Batch export failed: ${err.message}`, 'error');
-      console.error('Export failed:', err);
-    }
-  }
-
-  function toggleComparisonCandidate(candidateId) {
-    if (comparisonCandidateIds.includes(candidateId)) {
-      setComparisonCandidateIds(comparisonCandidateIds.filter(id => id !== candidateId));
-    } else {
-      setComparisonCandidateIds([...comparisonCandidateIds, candidateId]);
-    }
-  }
-
-  function handleSort(field) {
-    if (sortBy === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(field);
-      setSortOrder('asc');
-    }
-  }
-
-  // Leaderboard data: ranked by score
-  const leaderboardData = useMemo(() => {
-    return sortedRows
-      .filter(r => r.score != null)
-      .sort((a, b) => b.score - a.score)
-      .map((row, idx) => ({
-        ...row,
-        rank: idx + 1,
-        medal: idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '',
-      }));
-  }, [sortedRows]);
-
-  // Comparison data
-  const comparisonRows = useMemo(() => {
-    return sortedRows.filter(r => comparisonCandidateIds.includes(r.id));
-  }, [sortedRows, comparisonCandidateIds]);
-
-  // Cohort statistics
-  const cohortStats = useMemo(() => {
-    const scores = reportRows.filter(r => r.score != null).map(r => r.score);
-    const avgScore = scores.length > 0 ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1) : 0;
-    const maxScore = scores.length > 0 ? Math.max(...scores) : 0;
-    const minScore = scores.length > 0 ? Math.min(...scores) : 0;
-    
-    const experienceYears = reportRows
-      .map(r => extractExperienceSignals(candidates.find(c => c.id === r.id)?.raw_text || ''))
-      .map(e => e.totalYears || 0);
-    const avgExp = experienceYears.length > 0 
-      ? (experienceYears.reduce((a, b) => a + b, 0) / experienceYears.length).toFixed(1)
-      : 0;
-
-    return {
-      totalCandidates: reportRows.length,
-      avgScore,
-      maxScore,
-      minScore,
-      avgExp,
-      completionRate: pct(chartStats.completed, chartStats.total),
-      withData: chartStats.completed,
-      incomplete: chartStats.pending + chartStats.processing,
-    };
-  }, [reportRows, candidates, chartStats]);
 
   return (
     <section className="page-grid">
@@ -325,251 +114,123 @@ export default function AnalyticsReportsPage({
           <p>Profiles Missing Data</p>
           <strong>{chartStats.withMissing}</strong>
         </article>
-        <article className="summary-tile">
-          <p>High Scoring</p>
-          <strong>{chartStats.scoreHigh}</strong>
-        </article>
       </section>
 
       <section className="panel reveal delay-1">
-        <h2>Analytics Dashboard</h2>
-        <div className="charts-grid">
-          {/* Status Distribution Pie Chart */}
-          <div className="chart-container">
+        <h2>Initial Charts</h2>
+        <div className="chart-grid">
+          <article className="chart-card">
             <h3>Status Distribution</h3>
-            {statusChartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie
-                    data={statusChartData}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={80}
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                  >
-                    {statusChartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.fill} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <p>No data available</p>
-            )}
-          </div>
+            <div className="metric-row">
+              <span>Completed</span>
+              <div className="bar-track"><div className="bar-fill success" style={{ width: `${pct(chartStats.completed, chartStats.total)}%` }} /></div>
+              <strong>{chartStats.completed}</strong>
+            </div>
+            <div className="metric-row">
+              <span>Processing</span>
+              <div className="bar-track"><div className="bar-fill warning" style={{ width: `${pct(chartStats.processing, chartStats.total)}%` }} /></div>
+              <strong>{chartStats.processing}</strong>
+            </div>
+            <div className="metric-row">
+              <span>Pending</span>
+              <div className="bar-track"><div className="bar-fill neutral" style={{ width: `${pct(chartStats.pending, chartStats.total)}%` }} /></div>
+              <strong>{chartStats.pending}</strong>
+            </div>
+            <div className="metric-row">
+              <span>Failed</span>
+              <div className="bar-track"><div className="bar-fill danger" style={{ width: `${pct(chartStats.failed, chartStats.total)}%` }} /></div>
+              <strong>{chartStats.failed}</strong>
+            </div>
+          </article>
 
-          {/* Score Distribution Bar Chart */}
-          <div className="chart-container">
-            <h3>Score Distribution</h3>
-            {scoreChartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart
-                  data={scoreChartData}
-                  margin={{ top: 20, right: 30, left: 0, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} />
-                  <YAxis />
-                  <Tooltip />
-                  <Bar dataKey="value" fill="#3b82f6" radius={[8, 8, 0, 0]}>
-                    {scoreChartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.fill} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <p>No data available</p>
-            )}
-          </div>
+          <article className="chart-card">
+            <h3>Score Bands</h3>
+            <div className="metric-row">
+              <span>High (75-100)</span>
+              <div className="bar-track"><div className="bar-fill success" style={{ width: `${pct(chartStats.scoreHigh, chartStats.total)}%` }} /></div>
+              <strong>{chartStats.scoreHigh}</strong>
+            </div>
+            <div className="metric-row">
+              <span>Medium (50-74)</span>
+              <div className="bar-track"><div className="bar-fill warning" style={{ width: `${pct(chartStats.scoreMedium, chartStats.total)}%` }} /></div>
+              <strong>{chartStats.scoreMedium}</strong>
+            </div>
+            <div className="metric-row">
+              <span>Low (0-49)</span>
+              <div className="bar-track"><div className="bar-fill danger" style={{ width: `${pct(chartStats.scoreLow, chartStats.total)}%` }} /></div>
+              <strong>{chartStats.scoreLow}</strong>
+            </div>
+          </article>
         </div>
       </section>
 
       <div className="candidate-layout reveal delay-2">
         <article className="panel">
-          <h2>Candidate Comparison Table</h2>
-          <div className="toolbar">
-            <button className="btn compact" onClick={() => setShowLeaderboard(!showLeaderboard)}>
-              {showLeaderboard ? '← Back to Table' : '🏆 Leaderboard'}
-            </button>
-            <button className="btn compact" onClick={() => setShowStatistics(!showStatistics)}>
-              {showStatistics ? '← Back to Table' : '📊 Statistics'}
-            </button>
-            {comparisonCandidateIds.length > 0 && (
-              <button className="btn compact" onClick={() => setShowComparisonModal(true)}>
-                ⚖️ Compare {comparisonCandidateIds.length}
-              </button>
-            )}
-            <button className="btn compact" onClick={batchExportEmails}>
-              📥 Export Emails
-            </button>
-          </div>
-
+          <h2>Tabular Output</h2>
           {loading && <p>Loading candidate records...</p>}
           {!loading && reportRows.length === 0 && <p>No candidate records available yet.</p>}
 
-          {!loading && !showLeaderboard && !showStatistics && reportRows.length > 0 && (
+          {!loading && reportRows.length > 0 && (
             <div className="table-scroll">
               <table className="report-table">
                 <thead>
                   <tr>
-                    <th style={{ width: '40px' }}>
-                      <input type="checkbox" onChange={(e) => {
-                        if (e.target.checked) {
-                          setComparisonCandidateIds(sortedRows.map(r => r.id));
-                        } else {
-                          setComparisonCandidateIds([]);
-                        }
-                      }} />
-                    </th>
-                    <th onClick={() => handleSort('id')}>ID {sortBy === 'id' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
-                    <th onClick={() => handleSort('name')}>Candidate {sortBy === 'name' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
-                    <th onClick={() => handleSort('email')}>Email {sortBy === 'email' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
-                    <th onClick={() => handleSort('status')}>Status {sortBy === 'status' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
-                    <th onClick={() => handleSort('score')}>Score {sortBy === 'score' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
-                    <th onClick={() => handleSort('missingCount')}>Missing {sortBy === 'missingCount' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
-                    <th onClick={() => handleSort('uploadedAt')}>Uploaded {sortBy === 'uploadedAt' && (sortOrder === 'asc' ? '↑' : '↓')}</th>
+                    <th>ID</th>
+                    <th>Candidate</th>
+                    <th>Email</th>
+                    <th>Status</th>
+                    <th>Score</th>
+                    <th>Missing Fields</th>
+                    <th>Uploaded</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedRows.map((row) => (
+                  {reportRows.map((row) => (
                     <tr
                       key={row.id}
                       className={selectedCandidateId === row.id ? 'active-row' : ''}
-                      style={{ cursor: 'pointer' }}
+                      onClick={() => selectCandidate(row.id)}
                     >
-                      <td onClick={(e) => e.stopPropagation()}>
-                        <input 
-                          type="checkbox"
-                          checked={comparisonCandidateIds.includes(row.id)}
-                          onChange={() => toggleComparisonCandidate(row.id)}
-                        />
-                      </td>
-                      <td onClick={() => selectCandidate(row.id)}>{row.id}</td>
-                      <td onClick={() => selectCandidate(row.id)}>{row.name}</td>
-                      <td onClick={() => selectCandidate(row.id)} className="email-cell">{row.email}</td>
-                      <td onClick={() => selectCandidate(row.id)}><span className={`status-badge status-${row.status}`}>{row.status}</span></td>
-                      <td onClick={() => selectCandidate(row.id)}><strong>{row.score ?? '—'}</strong></td>
-                      <td onClick={() => selectCandidate(row.id)}>{row.missingCount}</td>
-                      <td onClick={() => selectCandidate(row.id)}>{row.uploadedAt ? new Date(row.uploadedAt).toLocaleString() : '—'}</td>
+                      <td>{row.id}</td>
+                      <td>{row.name}</td>
+                      <td>{row.email}</td>
+                      <td>{row.status}</td>
+                      <td>{row.score ?? '—'}</td>
+                      <td>{row.missingCount}</td>
+                      <td>{row.uploadedAt ? new Date(row.uploadedAt).toLocaleString() : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
-
-          {!loading && showLeaderboard && leaderboardData.length > 0 && (
-            <div className="leaderboard">
-              <h3>🏆 Candidate Leaderboard (by Score)</h3>
-              <div className="leaderboard-list">
-                {leaderboardData.map((row) => (
-                  <div key={row.id} className="leaderboard-row" onClick={() => selectCandidate(row.id)} style={{ cursor: 'pointer' }}>
-                    <span className="rank">{row.medal || `#${row.rank}`}</span>
-                    <span className="name">{row.name}</span>
-                    <span className="score" style={{ color: row.score >= 75 ? '#10b981' : row.score >= 50 ? '#f59e0b' : '#ef4444' }}>
-                      {row.score.toFixed(1)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {!loading && showStatistics && (
-            <div className="statistics-panel">
-              <h3>📊 Cohort Statistics</h3>
-              <div className="stats-grid">
-                <div className="stat-card">
-                  <p className="stat-label">Total Candidates</p>
-                  <p className="stat-value">{cohortStats.totalCandidates}</p>
-                </div>
-                <div className="stat-card">
-                  <p className="stat-label">Avg Score</p>
-                  <p className="stat-value">{cohortStats.avgScore}</p>
-                </div>
-                <div className="stat-card">
-                  <p className="stat-label">Score Range</p>
-                  <p className="stat-value">{cohortStats.minScore} — {cohortStats.maxScore}</p>
-                </div>
-                <div className="stat-card">
-                  <p className="stat-label">Avg Experience</p>
-                  <p className="stat-value">{cohortStats.avgExp} yrs</p>
-                </div>
-                <div className="stat-card">
-                  <p className="stat-label">Completion Rate</p>
-                  <p className="stat-value">{cohortStats.completionRate}%</p>
-                </div>
-                <div className="stat-card">
-                  <p className="stat-label">Analyzed</p>
-                  <p className="stat-value">{cohortStats.withData} / {cohortStats.totalCandidates}</p>
-                </div>
-              </div>
-            </div>
-          )}
         </article>
 
         <article className="panel">
-          <h2>Personalized Missing-Info Email</h2>
-          {!selectedCandidate && <p className="muted">Select a candidate row to view profile details and draft email.</p>}
+          <h2>Personalized Draft Email</h2>
+          {!selectedCandidate && <p>Select a candidate row to view draft email and missing-info profile.</p>}
 
           {selectedCandidate && details && (
             <div className="page-grid">
               <section className="info-box">
                 <h3>{selectedCandidate.full_name || selectedCandidate.filename || `Candidate ${selectedCandidate.id}`}</h3>
-                <p><strong>Missing Fields:</strong> {details.missingFields.length === 0 ? 'Complete ✓' : details.missingFields.join(', ')}</p>
-                {details.education.detectedDegrees.length > 0 && (
-                  <div>
-                    <p><strong>Education:</strong></p>
-                    <div className="tag-row">
-                      {details.education.detectedDegrees.map((degree) => (
-                        <span className="tag" key={degree}>{degree}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {details.research.topicHints.length > 0 && (
-                  <div>
-                    <p><strong>Research Areas:</strong></p>
-                    <div className="tag-row">
-                      {details.research.topicHints.map((topic) => (
-                        <span className="tag" key={topic}>{topic}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <p><strong>Missing Fields:</strong> {details.missingFields.join(', ') || 'No key fields missing'}</p>
+                <div className="tag-row">
+                  {details.education.detectedDegrees.map((degree) => (
+                    <span className="tag" key={degree}>{degree}</span>
+                  ))}
+                  {details.research.topicHints.map((topic) => (
+                    <span className="tag" key={topic}>{topic}</span>
+                  ))}
+                </div>
               </section>
 
               <section className="email-panel">
                 <div className="email-toolbar">
-                  <div>
-                    <p className="muted">Ready-to-send draft{emailRegeneratedAt && ` (updated: ${emailRegeneratedAt})`}</p>
-                  </div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button 
-                      type="button" 
-                      className="btn compact" 
-                      onClick={regenerateEmail}
-                      disabled={emailRegenLoading}
-                    >
-                      {emailRegenLoading ? '⟳ Regenerating...' : '🔄 Regenerate'}
-                    </button>
-                    <button type="button" className="btn compact" onClick={copyDraftEmail}>
-                      {copied ? '✓ Copied' : '📋 Copy'}
-                    </button>
-                    <button 
-                      type="button" 
-                      className="btn compact" 
-                      onClick={downloadPDF}
-                      disabled={pdfDownloadLoading}
-                      aria-label="Download candidate PDF report"
-                    >
-                      {pdfDownloadLoading ? '⟳ Generating...' : '📄 PDF Report'}
-                    </button>
-                  </div>
+                  <p className="muted">Ready-to-send draft</p>
+                  <button type="button" className="btn compact" onClick={copyDraftEmail}>
+                    {copied ? 'Copied' : 'Copy Email'}
+                  </button>
                 </div>
                 <pre className="email-draft-pretty">{details.emailDraft}</pre>
               </section>
@@ -577,43 +238,6 @@ export default function AnalyticsReportsPage({
           )}
         </article>
       </div>
-      
-      {showComparisonModal && comparisonRows.length > 0 && (
-        <div className="comparison-modal" onClick={() => setShowComparisonModal(false)}>
-          <div className="comparison-modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="comparison-modal-header">
-              <h2>⚖️ Candidate Comparison</h2>
-              <button className="comparison-modal-close" onClick={() => setShowComparisonModal(false)}>×</button>
-            </div>
-            <table className="comparison-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Email</th>
-                  <th>Score</th>
-                  <th>Status</th>
-                  <th>Missing</th>
-                  <th>Uploaded</th>
-                </tr>
-              </thead>
-              <tbody>
-                {comparisonRows.map((row) => (
-                  <tr key={row.id}>
-                    <td><strong>{row.name}</strong></td>
-                    <td>{row.email}</td>
-                    <td style={{ fontWeight: 'bold', color: row.score >= 75 ? '#10b981' : row.score >= 50 ? '#f59e0b' : '#ef4444' }}>
-                      {row.score?.toFixed(1) ?? '—'}
-                    </td>
-                    <td><span className={`status-badge status-${row.status}`}>{row.status}</span></td>
-                    <td>{row.missingCount}</td>
-                    <td style={{ fontSize: '12px' }}>{row.uploadedAt ? new Date(row.uploadedAt).toLocaleDateString() : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
     </section>
   );
 }

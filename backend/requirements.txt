@@ -12,8 +12,6 @@ alembic==1.14.0                 # database migrations
 # ── PDF Parsing ─────────────────────────────────────────────
 pymupdf==1.25.1                 # primary CV parser (fitz)
 pdfplumber==0.11.4              # fallback for tables in PDFs
-reportlab==4.0.9                # PDF report generation
-matplotlib==3.9.2               # chart/visualization for PDFs
 
 # ── LLM & Orchestration ─────────────────────────────────────
 langchain==0.3.13
@@ -21,7 +19,6 @@ langchain-community==0.3.13     # Ollama integration
 langchain-core==0.3.28
 ollama==0.4.4                   # local LLM (LLaMA 3.1)
 groq==0.11.0                    # Groq SDK used by AsyncGroq client
-google-generativeai==0.8.3      # Google Gemini API
 
 # ── Data Handling ────────────────────────────────────────────
 pandas==2.2.3                   # structured data / CSV / Excel export

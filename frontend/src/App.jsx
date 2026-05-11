@@ -5,7 +5,6 @@ import OverviewPage from './pages/OverviewPage';
 import IngestionPage from './pages/IngestionPage';
 import CandidateInsightsPage from './pages/CandidateInsightsPage';
 import AnalyticsReportsPage from './pages/AnalyticsReportsPage';
-import ErrorBoundary from './components/ErrorBoundary';
 
 const ROUTES = [
   {
@@ -53,7 +52,6 @@ function App() {
   const [selectedCandidate, setSelectedCandidate] = useState(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [activeAnalyses, setActiveAnalyses] = useState({});
-  const [toasts, setToasts] = useState([]);
 
   const activeRouteMeta = useMemo(
     () => ROUTES.find((route) => route.id === activeRoute) || ROUTES[0],
@@ -61,11 +59,8 @@ function App() {
   );
 
   const ActivePage = activeRouteMeta.component;
-  const isBusy = loadingCandidates || loadingDetails || Object.values(activeAnalyses).some(Boolean);
 
   useEffect(() => {
-    window.__talashNotify = notify;
-
     const handleHashChange = () => {
       setActiveRoute(readHashRoute());
     };
@@ -73,7 +68,6 @@ function App() {
     window.addEventListener('hashchange', handleHashChange);
     return () => {
       window.removeEventListener('hashchange', handleHashChange);
-      delete window.__talashNotify;
     };
   }, []);
 
@@ -137,14 +131,6 @@ function App() {
     window.location.hash = `/${routeId}`;
   }
 
-  function notify(message, variant = 'info') {
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    setToasts((prev) => [...prev, { id, message, variant }]);
-    window.setTimeout(() => {
-      setToasts((prev) => prev.filter((toast) => toast.id !== id));
-    }, 3500);
-  }
-
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -169,38 +155,26 @@ function App() {
       </aside>
 
       <main className="content">
-        {isBusy && <div className="page-progress" aria-hidden="true"><span /></div>}
         <header className="page-header reveal">
           <h2>{activeRouteMeta.title}</h2>
           <p>{activeRouteMeta.description}</p>
           {candidatesError && <p className="error-text">{candidatesError}</p>}
         </header>
 
-        <ErrorBoundary onError={(error) => notify(error?.message || 'Unexpected page error', 'error')}>
-          <ActivePage
-            candidates={candidates}
-            loading={loadingCandidates}
-            refreshCandidates={refreshCandidates}
-            selectedCandidate={selectedCandidate}
-            selectedCandidateId={selectedCandidateId}
-            detailLoading={loadingDetails}
-            selectCandidate={selectCandidate}
-            onAnalyzeSelected={runAnalysisForSelectedCandidate}
-            activeAnalyses={activeAnalyses}
-            candidatesError={candidatesError}
-            onUploaded={refreshCandidates}
-            notify={notify}
-          />
-        </ErrorBoundary>
+        <ActivePage
+          candidates={candidates}
+          loading={loadingCandidates}
+          refreshCandidates={refreshCandidates}
+          selectedCandidate={selectedCandidate}
+          selectedCandidateId={selectedCandidateId}
+          detailLoading={loadingDetails}
+          selectCandidate={selectCandidate}
+          onAnalyzeSelected={runAnalysisForSelectedCandidate}
+          activeAnalyses={activeAnalyses}
+          candidatesError={candidatesError}
+          onUploaded={refreshCandidates}
+        />
       </main>
-
-      <div className="toast-stack" aria-live="polite" aria-atomic="true">
-        {toasts.map((toast) => (
-          <div key={toast.id} className={`toast toast-${toast.variant}`}>
-            {toast.message}
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

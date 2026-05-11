@@ -90,13 +90,13 @@ Use exactly this JSON schema:
 {
   "full_name": string|null, # Use the full name as it appears on the CV
   "email": string|null,  # email of the candidate
-  "phone": string|null,  # phone number of the candidate can start with country code or not like +1 or 001 or just 1234567890
+  "phone": string|null,  # phone number exactly as written in the CV, including any +, -, spaces or formatting for example +92 ... detect it from raw text 
   "address": string|null,  # currently living address of the candidate if available
   "linkedin_url": string|null,  # linkedin profile of the candidate, must have linkedin in the url dont mix it wiht github link or any other link
   "nationality": string|null,
-  "universities": string|null,  # Names of the universities or educational institutions attended by the candidate
+  "universities": string|null,  # Names of the universities or educational institutions attended by the candidate look this in education section
   "overall_summary": string|null,
-  "overall_score": number|null
+  "overall_score": number|null  # evaluate the candidate profile strength and assign an overall score out of 100 based on their experience, education, and skills. Do not return null, calculate an objective score. 
 }
 
 Rules:
@@ -426,72 +426,25 @@ async def parse_cv(
 # ENDPOINT — GET /cv/candidates
 # Returns all candidates in the database (for dashboard)
 @router.get("/candidates")
-async def get_all_candidates(
-    db: AsyncSession = Depends(get_db),
-    skip: int = 0,
-    limit: int = 100,
-    status: str | None = None,
-    sort_by: str = "uploaded_at",
-    sort_order: str = "desc"
-):
+async def get_all_candidates(db: AsyncSession = Depends(get_db)):
     """
     Returns a list of all candidates with their basic info and status.
-    Supports pagination, filtering by status, and sorting.
-    
-    Query parameters:
-    - skip: Number of records to skip (default: 0)
-    - limit: Number of records to return (default: 100, max: 1000)
-    - status: Filter by status (PENDING, PROCESSING, COMPLETED, FAILED)
-    - sort_by: Sort field (uploaded_at, full_name, overall_score)
-    - sort_order: Sort order (asc, desc)
+    Used by the frontend dashboard to show uploaded CVs.
     """
-    limit = min(limit, 1000)  # Cap at 1000
-    
-    # Build query
-    query = select(Candidate)
-    
-    # Apply status filter if provided
-    if status:
-        query = query.where(Candidate.status == status)
-    
-    # Apply sorting
-    sort_column = {
-        "uploaded_at": Candidate.uploaded_at,
-        "full_name": Candidate.full_name,
-        "overall_score": Candidate.overall_score,
-    }.get(sort_by, Candidate.uploaded_at)
-    
-    if sort_order.lower() == "asc":
-        query = query.order_by(sort_column.asc())
-    else:
-        query = query.order_by(sort_column.desc())
-    
-    # Get total count for pagination
-    count_result = await db.execute(select(Candidate))
-    total_count = len(count_result.scalars().all())
-    
-    # Apply pagination
-    query = query.offset(skip).limit(limit)
-    
-    result = await db.execute(query)
+    result = await db.execute(
+        select(Candidate).order_by(Candidate.uploaded_at.desc())
+    )
     candidates = result.scalars().all()
 
     return {
-        "total": total_count,
-        "count": len(candidates),
-        "skip": skip,
-        "limit": limit,
-        "status_filter": status,
+        "total": len(candidates),
         "candidates": [
             {
                 "id": c.id,
                 "full_name": c.full_name or "Not yet extracted",
-                "email": c.email or None,
                 "filename": c.cv_filename,
-                "status": c.status.value if hasattr(c.status, 'value') else str(c.status),
-                "overall_score": c.overall_score,
-                "uploaded_at": c.uploaded_at.isoformat() if c.uploaded_at else None,
-                "processed_at": c.processed_at.isoformat() if c.processed_at else None,
+                "status": c.status,
+                "uploaded_at": c.uploaded_at,
             }
             for c in candidates
         ]
@@ -570,15 +523,11 @@ async def analyze_candidate(
 
     try:
         system_prompt, user_prompt = _candidate_analysis_prompts(candidate.cv_raw_text)
-        # MULTI-LLM STRATEGY (Option A):
-        # - Groq for structured data extraction (personal info)
-        # - See analysis.py for Gemini-powered research enrichment
         parsed = await ask_llm(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.1,
             max_tokens=LLM_RESPONSE_MAX_TOKENS,
-            provider="groq"  # Groq is ideal for structured data extraction
         )
 
         candidate.full_name = parsed.get("full_name")
@@ -687,3 +636,181 @@ async def export_all_structured_datasets(db: AsyncSession = Depends(get_db)):
         "export_dir": export_dir,
         "results": export_results,
     }
+
+
+# =============================================================================
+# HELPER — Detect blank pages and split a combined PDF into CV segments
+# A page is "blank" when it has fewer than BLANK_THRESHOLD printable chars.
+# Consecutive blank pages are treated as a single separator.
+# =============================================================================
+
+BLANK_THRESHOLD = 30  # characters
+
+
+def _split_combined_cv_pdf(filepath: str) -> list[tuple[int, int]]:
+    """
+    Open a combined PDF and return a list of (start_page, end_page) tuples,
+    one tuple per detected CV segment.
+
+    Strategy:
+      1. Mark every page whose extracted text < BLANK_THRESHOLD as blank.
+      2. Walk the page list; when we hit a non-blank run, record it as a segment.
+      3. A segment must contain at least 1 non-blank page.
+    """
+    doc = fitz.open(filepath)
+    total_pages = len(doc)
+
+    blank: set[int] = set()
+    for page_num in range(total_pages):
+        page_text = doc[page_num].get_text().strip()
+        if len(page_text) < BLANK_THRESHOLD:
+            blank.add(page_num)
+
+    doc.close()
+
+    segments: list[tuple[int, int]] = []
+    i = 0
+    while i < total_pages:
+        # Skip over blank / separator pages
+        if i in blank:
+            i += 1
+            continue
+
+        # We are at the start of a non-blank run — record the segment
+        seg_start = i
+        while i < total_pages and i not in blank:
+            i += 1
+        seg_end = i - 1  # last non-blank page in this run
+
+        if seg_end >= seg_start:
+            segments.append((seg_start, seg_end))
+
+    return segments
+
+
+# =============================================================================
+# ENDPOINT — POST /cv/upload/bulk-combined
+# Accept ONE PDF that contains many CVs separated by blank pages.
+# Splits it into individual segments and ingests each as a separate candidate.
+# =============================================================================
+
+@router.post("/upload/bulk-combined")
+async def upload_bulk_combined_pdf(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Upload a single PDF that contains multiple CVs separated by blank pages.
+
+    Processing steps:
+      1. Save the combined PDF to uploads/ temporarily.
+      2. Detect blank-page separators with PyMuPDF.
+      3. Extract each CV segment into a separate PDF file.
+      4. Ingest each segment as an independent candidate record.
+      5. Delete all temporary files.
+    """
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+    # ---- Save the combined upload temporarily ----
+    ts = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+    temp_combined_name = f"_combined_{ts}.pdf"
+    temp_combined_path = os.path.join(UPLOAD_DIR, temp_combined_name)
+
+    with open(temp_combined_path, "wb") as buf:
+        shutil.copyfileobj(file.file, buf)
+
+    # ---- Detect CV segments ----
+    try:
+        segments = _split_combined_cv_pdf(temp_combined_path)
+    except Exception as exc:
+        _try_remove(temp_combined_path)
+        raise HTTPException(status_code=422, detail=f"Failed to analyse combined PDF: {str(exc)}")
+
+    if not segments:
+        _try_remove(temp_combined_path)
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "No CV segments detected in the PDF. "
+                "Ensure individual CVs are separated by at least one blank page."
+            ),
+        )
+
+    # ---- Extract and ingest each segment ----
+    results: list[dict] = []
+    segment_paths: list[str] = []
+
+    for idx, (start_page, end_page) in enumerate(segments, start=1):
+        seg_ts = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+        seg_filename = f"_cv_seg{idx}_{seg_ts}.pdf"
+        seg_path = os.path.join(UPLOAD_DIR, seg_filename)
+        segment_paths.append(seg_path)
+
+        try:
+            # Write the page range into a new PDF file
+            src_doc = fitz.open(temp_combined_path)
+            seg_doc = fitz.open()
+            seg_doc.insert_pdf(src_doc, from_page=start_page, to_page=end_page)
+            seg_doc.save(seg_path)
+            seg_doc.close()
+            src_doc.close()
+
+            # Validate extracted text before ingesting
+            seg_text = sanitize_cv_text(extract_text_from_pdf(seg_path))
+            if not seg_text or len(seg_text.strip()) < 50:
+                results.append({
+                    "success": False,
+                    "segment": idx,
+                    "pages": f"{start_page + 1}-{end_page + 1}",
+                    "error": "Segment has insufficient text — may be an image-only CV.",
+                })
+                _try_remove(seg_path)
+                continue
+
+            parsed = await _ingest_cv_from_file(
+                db=db,
+                filename=seg_filename,
+                filepath=seg_path,
+                delete_after_parse=True,  # cleanup handled by ingestor
+            )
+            results.append({
+                "success": True,
+                "segment": idx,
+                "pages": f"{start_page + 1}-{end_page + 1}",
+                **parsed,
+            })
+
+        except Exception as exc:
+            _try_remove(seg_path)
+            results.append({
+                "success": False,
+                "segment": idx,
+                "pages": f"{start_page + 1}-{end_page + 1}",
+                "error": str(exc),
+            })
+
+    # ---- Clean up the combined temp file ----
+    _try_remove(temp_combined_path)
+
+    processed = sum(1 for r in results if r.get("success"))
+    failed    = len(results) - processed
+
+    return {
+        "success":                failed == 0,
+        "total_segments_detected": len(segments),
+        "processed":              processed,
+        "failed":                 failed,
+        "results":                results,
+    }
+
+
+def _try_remove(path: str) -> None:
+    """Delete a file silently — used for cleanup of temp files."""
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass

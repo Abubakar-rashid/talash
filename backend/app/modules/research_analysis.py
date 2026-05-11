@@ -1,183 +1,289 @@
 from __future__ import annotations
 
 import re
-from collections import Counter
 from typing import Any
 
-from app.modules.preprocessing import extract_publication_records
-from app.modules.publication_rankings import enrich_publication_rankings
-from app.modules.topic_diversity import analyze_research_diversity
+from app.llm.llm_client import ask_publication_llm
 
 
-def _extract_authors_from_line(line: str) -> list[str]:
-    """Extract potential author names from a publication line."""
-    # Common patterns:
-    # "Title by Author1, Author2"
-    # "Author1 et al., Title"
-    # "Title | Author1 & Author2"
-    
-    authors = []
-    
-    # Try to extract names using common separators
-    separators = [", ", " and ", " & ", "|", ";"]
-    text_without_title_markers = re.sub(r"\b(?:in|published|journal|conference|proceedings)\b", "", line, flags=re.IGNORECASE)
-    
-    for sep in separators:
-        if sep in text_without_title_markers:
-            parts = text_without_title_markers.split(sep)
-            for part in parts:
-                part = part.strip()
-                # Check if part looks like author names (has capital letters, reasonable length)
-                if part and 3 <= len(part) <= 100 and not any(
-                    keyword in part.lower() 
-                    for keyword in ["conference", "journal", "proceedings", "volume", "page", "http"]
-                ):
-                    # Try to extract individual names
-                    if " et al" in part.lower():
-                        match = re.search(r"([A-Z][a-z]+ [A-Z][a-z]+)\s+et al", part)
-                        if match:
-                            authors.append(match.group(1))
-                    else:
-                        # Extract capitalized sequences that look like names
-                        names = re.findall(r"([A-Z][a-z]+ [A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)", part)
-                        authors.extend(names)
-    
-    return list(set(authors))  # Remove duplicates
+# =============================================================================
+# PUBLICATION SECTION EXTRACTION
+# Strategy: find the start of the publications section and extract a generous
+# chunk of text from that point forward. We are deliberately NOT cutting at
+# "awards" etc. because tables often span pages and a conservative cut was
+# the root cause of missed publications.
+# =============================================================================
+
+_PUB_SECTION_HEADERS = [
+    "research publication", "publications", "research papers", "journal papers",
+    "conference papers", "papers published", "published papers", "articles",
+    "research work", "scholarly work", "peer-reviewed", "refereed",
+]
+
+# Only cut at clearly unrelated sections that would never contain publications
+_HARD_STOP_HEADERS = [
+    "declaration", "personal detail", "hobby", "interest",
+    "volunteer", "membership", "affiliation", "language proficiency",
+    "objective", "career objective",
+]
+
+# Maximum chars we send to the LLM (large to capture multi-page tables)
+_MAX_SECTION_CHARS = 20_000
+# Minimum chars required to conclude there are publications worth analysing
+_MIN_SECTION_CHARS = 30
 
 
-def _extract_research_domains(raw_text: str) -> list[str]:
-    """Identify research domains/areas from publication titles and text."""
-    research_domains = {
-        "AI/ML": ["machine learning", "deep learning", "neural network", "nlp", "natural language", "computer vision", "ai", "artificial intelligence"],
-        "Data Science": ["data mining", "data science", "analytics", "big data", "statistics"],
-        "Web/Cloud": ["web", "cloud", "distributed", "microservice", "api", "rest"],
-        "Systems": ["operating system", "database", "distributed system", "architecture"],
-        "Security": ["security", "cryptography", "encryption", "authentication"],
-        "IoT/Embedded": ["iot", "embedded", "raspberry", "arduino", "sensor"],
-        "Bioinformatics": ["bioinformatics", "genomics", "dna", "protein"],
-        "HCI/UX": ["human computer", "user interface", "ux", "usability"],
+def _extract_publications_section(raw_text: str) -> str:
+    """
+    Locate the publications portion of the CV text and return a generous slice.
+    - Searches for common publication section headers.
+    - Only cuts at hard-stop sections (declaration, hobbies, …) so that
+      publications spread across multiple pages are NOT truncated early.
+    - Falls back to the whole CV (truncated) when no header is found.
+    """
+    lower = raw_text.lower()
+
+    # Find the earliest publications section header
+    start_idx = -1
+    for header in _PUB_SECTION_HEADERS:
+        idx = lower.find(header)
+        if idx != -1 and (start_idx == -1 or idx < start_idx):
+            start_idx = idx
+
+    if start_idx == -1:
+        # No section header — send the full CV, LLM will find publications
+        return raw_text[:_MAX_SECTION_CHARS]
+
+    # Find an early hard-stop if present (ignore soft stops like "awards")
+    end_idx = len(raw_text)
+    search_region = lower[start_idx + 80:]  # skip past the header itself
+    for stop in _HARD_STOP_HEADERS:
+        idx = search_region.find(stop)
+        if idx != -1:
+            candidate_end = start_idx + 80 + idx
+            if candidate_end < end_idx:
+                end_idx = candidate_end
+
+    section_text = raw_text[start_idx:end_idx]
+
+    # If section is tiny, fall back to full CV — perhaps headers are embedded in tables
+    if len(section_text.strip()) < _MIN_SECTION_CHARS:
+        return raw_text[:_MAX_SECTION_CHARS]
+
+    return section_text[:_MAX_SECTION_CHARS]
+
+
+# =============================================================================
+# LLM PROMPTS
+# =============================================================================
+
+_SYSTEM_PROMPT = """
+You are an expert academic CV analyser specialising in research publication extraction.
+Extract EVERY SINGLE publication listed in the CV — journals, conferences, books, book chapters.
+
+Publications often appear in TABLES with columns like:
+  Paper Title | Name of Author | Name of CO-Author | Published In | No | Impact Factor | Vol | PP | Date
+
+Extract EVERY TABLE ROW as a separate publication. Do not skip any row.
+The CV may span multiple pages — ensure all publications across all pages are captured.
+
+Return ONLY valid JSON with no markdown fences, no prose, no trailing commas.
+If a value cannot be determined, use null.
+
+JSON schema (return exactly this):
+{
+  "publications": [
+    {
+      "title": string|null,
+      "pub_type": "journal"|"conference"|"book"|"book_chapter"|"other",
+      "authors_raw": string|null,
+      "year": integer|null,
+      "candidate_author_position": integer|null,
+      "quality_note": string|null,
+      "journal": {
+        "journal_name": string|null,
+        "issn": string|null,
+        "is_wos_indexed": boolean|null,
+        "impact_factor": number|null,
+        "is_scopus_indexed": boolean|null,
+        "quartile": string|null,
+        "is_predatory": boolean|null
+      },
+      "conference": {
+        "conference_name": string|null,
+        "proceedings_title": string|null,
+        "core_rank": string|null,
+        "is_a_star": boolean|null,
+        "series_edition": string|null,
+        "is_scopus_indexed": boolean|null,
+        "is_ieee_xplore": boolean|null,
+        "is_springer": boolean|null,
+        "is_acm": boolean|null,
+        "other_indexing": string|null
+      },
+      "co_authors": [
+        { "co_author_name": string, "author_position": integer|null }
+      ]
     }
-    
-    detected_domains = []
-    lower_text = raw_text.lower()
-    
-    for domain, keywords in research_domains.items():
-        if any(keyword in lower_text for keyword in keywords):
-            detected_domains.append(domain)
-    
-    return detected_domains
+  ],
+  "coauthor_analysis": {
+    "total_unique_coauthors": integer|null,
+    "avg_coauthors_per_paper": number|null,
+    "max_coauthors_in_paper": integer|null,
+    "recurring_collaborators": [{"name": string, "count": integer}],
+    "most_frequent_collaborator": string|null,
+    "collaboration_diversity_score": number|null,
+    "has_student_collaborations": boolean|null,
+    "has_international_collaborations": boolean|null,
+    "collaboration_summary": string|null
+  },
+  "topic_variability": {
+    "dominant_topic": string|null,
+    "diversity_score": number|null,
+    "topic_clusters": [string],
+    "topic_trend": string|null, # briefly describe how topics evolved over years, e.g. "Started with networking, moved to deep learning". Calculate this based on publication years.
+    "variability_summary": string|null
+  }
+}
+
+Critical rules:
+- pub_type "journal" → fill journal object, set conference fields to null.
+- pub_type "conference" → fill conference object, set journal fields to null.
+- candidate_author_position: position of THIS candidate in the author list (1 = first).
+- impact_factor: numeric value only (e.g. 2.10 not "2.10 / 5").
+- is_wos_indexed / is_scopus_indexed: infer from impact_factor presence or explicit mention.
+- collaboration_diversity_score: 0.0–1.0 (higher = more diverse).
+- diversity_score: 0.0–1.0 (higher = more varied topics).
+- Do NOT invent data absent from the text.
+- Do NOT stop early — extract every single publication present.
+""".strip()
 
 
-def _extract_publication_year_range(publications: list[dict[str, Any]]) -> tuple[int | None, int | None]:
-    """Extract earliest and latest publication years."""
-    years = [pub.get("year") for pub in publications if pub.get("year")]
-    if not years:
-        return None, None
-    return min(years), max(years)
+def _build_user_prompt(cv_section: str, candidate_name: str | None) -> str:
+    name_hint = (
+        f"The candidate's name is: {candidate_name}. "
+        "Exclude this name when listing co_authors.\n"
+    ) if candidate_name else ""
+    return (
+        f"Extract ALL publications from the following CV text.\n"
+        f"{name_hint}"
+        "Pay special attention to table rows — each row is a separate publication.\n"
+        "The table may span multiple pages; extract every row you see.\n\n"
+        f"CV TEXT:\n{cv_section}"
+    )
 
 
-def _calculate_publication_diversity(publications: list[dict[str, Any]]) -> dict[str, Any]:
-    """Calculate diversity metrics of publications."""
-    types = Counter(pub.get("pub_type", "unknown") for pub in publications)
-    venues = Counter(pub.get("quality_note", "").split()[0] for pub in publications if pub.get("quality_note"))
-    
+# =============================================================================
+# PUBLIC API
+# =============================================================================
+
+async def analyze_publications_deep(
+    raw_text: str,
+    candidate_name: str | None = None,
+) -> dict[str, Any]:
+    """
+    Deep LLM-powered publication analysis using the dedicated second Groq API key.
+    Returns a structured dict ready for DB insertion.
+    """
+    pub_section = _extract_publications_section(raw_text)
+
+    if len(pub_section.strip()) < _MIN_SECTION_CHARS:
+        return _empty_result()
+
+    user_prompt = _build_user_prompt(pub_section, candidate_name)
+
+    try:
+        parsed = await ask_publication_llm(
+            system_prompt=_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            temperature=0.0,   # deterministic extraction
+            max_tokens=8000,   # generous — 5+ publications with full metadata
+        )
+    except Exception as exc:
+        raise RuntimeError(f"Publication LLM analysis failed: {exc}") from exc
+
+    publications  = parsed.get("publications") or []
+    coauthor_data = parsed.get("coauthor_analysis") or {}
+    topic_data    = parsed.get("topic_variability") or {}
+
+    publications = [p for p in publications if isinstance(p, dict)]
+
+    # Compute summary statistics
+    journal_count    = sum(1 for p in publications if p.get("pub_type") == "journal")
+    conference_count = sum(1 for p in publications if p.get("pub_type") == "conference")
+    years = sorted({p["year"] for p in publications if isinstance(p.get("year"), int)})
+    ifs   = [
+        float(p["journal"]["impact_factor"])
+        for p in publications
+        if isinstance((p.get("journal") or {}).get("impact_factor"), (int, float))
+    ]
+    avg_if = round(sum(ifs) / len(ifs), 3) if ifs else None
+
     return {
-        "type_distribution": dict(types),
-        "unique_venue_count": len(venues),
-        "most_common_type": types.most_common(1)[0][0] if types else None,
+        "publications":      publications,
+        "coauthor_analysis": coauthor_data,
+        "topic_variability": topic_data,
+        "summary": {
+            "total_publications":   len(publications),
+            "journal_count":        journal_count,
+            "conference_count":     conference_count,
+            "publication_years":    years,
+            "avg_impact_factor":    avg_if,
+            "max_impact_factor":    max(ifs) if ifs else None,
+            "wos_indexed_count":    sum(
+                1 for p in publications
+                if (p.get("journal") or {}).get("is_wos_indexed") is True
+            ),
+            "scopus_indexed_count": sum(
+                1 for p in publications
+                if (
+                    (p.get("journal") or {}).get("is_scopus_indexed") is True
+                    or (p.get("conference") or {}).get("is_scopus_indexed") is True
+                )
+            ),
+        },
     }
 
+
+# =============================================================================
+# Legacy stub — kept for backward compatibility with the /analysis/full endpoint
+# =============================================================================
 
 async def analyze_research(raw_text: str) -> dict[str, Any]:
     """
-    Complete research profile processing including:
-    - Publication extraction and analysis
-    - Co-author analysis
-    - Research domain identification
-    - Publication metrics and trends
-    - Research quality assessment
+    Lightweight research profile used by the full-analysis pipeline.
+    Returns basic publication counts without deep LLM calls.
     """
-    publications = extract_publication_records(raw_text)
-    
-    journal_count = sum(1 for pub in publications if pub.get("pub_type") == "journal")
-    conference_count = sum(1 for pub in publications if pub.get("pub_type") == "conference")
-    other_count = len(publications) - journal_count - conference_count
-    
-    # Extract and analyze co-authors
-    all_authors: list[str] = []
-    for pub in publications:
-        title = pub.get("title", "")
-        authors = _extract_authors_from_line(title)
-        pub["extracted_authors"] = authors
-        all_authors.extend(authors)
-    
-    author_frequency = Counter(all_authors)
-    unique_coauthors = len(author_frequency)
-    most_frequent_coauthors = author_frequency.most_common(5)
-    
-    # Research domains
-    research_domains = _extract_research_domains(raw_text)
-    
-    # Publication timeline
-    earliest_year, latest_year = _extract_publication_year_range(publications)
-    publication_span = (latest_year - earliest_year) if earliest_year and latest_year else None
-    
-    # Publication diversity
-    diversity_metrics = _calculate_publication_diversity(publications)
-    
-    # Topic diversity and co-author network analysis
-    topic_diversity_analysis = analyze_research_diversity(publications)
+    from app.modules.preprocessing import extract_publication_records
 
-    # External publication ranking enrichment (QS / Scopus / WoS / CORE when configured)
-    publication_rankings = enrich_publication_rankings(publications)
-    
-    # Calculate research activity score (0-100)
-    research_score = min(100, (
-        (journal_count * 15) +  # Journals worth more
-        (conference_count * 8) +  # Conferences worth less
-        (other_count * 3) +  # Other publications
-        (unique_coauthors * 2) +  # Collaboration diversity
-        (len(research_domains) * 10)  # Domain diversity
-    ))
-    
-    # Identify research productivity trend
-    productivity_trend = "increasing" if publication_span and publication_span >= 3 else "stable" if publication_span else "new"
-    
-    # Co-author analysis
-    coauthor_info = {
-        "total_unique_coauthors": unique_coauthors,
-        "most_frequent_collaborators": [
-            {"name": name, "collaboration_count": count} 
-            for name, count in most_frequent_coauthors
-        ],
-        "collaboration_diversity_score": min(100, unique_coauthors * 10),
-        "average_coauthors_per_publication": round(len(all_authors) / len(publications), 2) if publications else 0,
-    }
-    
+    publications     = extract_publication_records(raw_text)
+    journal_count    = sum(1 for p in publications if p.get("pub_type") == "journal")
+    conference_count = sum(1 for p in publications if p.get("pub_type") == "conference")
+
     return {
         "publications": publications,
-        "coauthor_analysis": coauthor_info,
-        "research_domains": research_domains,
         "summary": {
-            "publications_count": len(publications),
-            "journal_count": journal_count,
-            "conference_count": conference_count,
-            "other_count": other_count,
-            "publication_span_years": publication_span,
-            "earliest_publication_year": earliest_year,
-            "latest_publication_year": latest_year,
-            "productivity_trend": productivity_trend,
-            "research_score": research_score,
-            "is_partial_processing": False,  # Now complete!
+            "publications_count":    len(publications),
+            "journal_count":         journal_count,
+            "conference_count":      conference_count,
+            "is_partial_processing": True,
         },
-        "diversity_metrics": diversity_metrics,
-        "topic_diversity_analysis": topic_diversity_analysis,
-        "publication_rankings": publication_rankings,
-        "research_profile_assessment": {
-            "has_publications": len(publications) > 0,
-            "publication_focus": diversity_metrics.get("most_common_type"),
-            "research_domains": research_domains,
-            "collaboration_level": "high" if unique_coauthors > 10 else "moderate" if unique_coauthors > 3 else "limited",
-            "research_maturity": "established" if publication_span and publication_span >= 5 else "emerging" if publication_span else "not_yet_established",
+    }
+
+
+def _empty_result() -> dict[str, Any]:
+    return {
+        "publications":      [],
+        "coauthor_analysis": {},
+        "topic_variability": {},
+        "summary": {
+            "total_publications":   0,
+            "journal_count":        0,
+            "conference_count":     0,
+            "publication_years":    [],
+            "avg_impact_factor":    None,
+            "max_impact_factor":    None,
+            "wos_indexed_count":    0,
+            "scopus_indexed_count": 0,
         },
     }

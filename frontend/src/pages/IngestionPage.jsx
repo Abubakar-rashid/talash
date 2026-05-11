@@ -3,6 +3,8 @@ import {
   ingestCandidateFolder,
   parseCandidateByFilename,
   uploadCandidateCV,
+  uploadCandidateCVBulk,
+  uploadCombinedBulkPDF,
 } from '../lib/api';
 
 function pickPdfFiles(fileList) {
@@ -10,40 +12,21 @@ function pickPdfFiles(fileList) {
 }
 
 export default function IngestionPage({ refreshCandidates }) {
-  const [singleFile, setSingleFile] = useState(null);
-  const [bulkFiles, setBulkFiles] = useState([]);
-  const [folderFiles, setFolderFiles] = useState([]);
-  const [serverFilename, setServerFilename] = useState('');
+  const [singleFile, setSingleFile]             = useState(null);
+  const [bulkFiles, setBulkFiles]               = useState([]);
+  const [folderFiles, setFolderFiles]           = useState([]);
+  const [combinedFile, setCombinedFile]         = useState(null);
+  const [serverFilename, setServerFilename]     = useState('');
   const [serverFolderPath, setServerFolderPath] = useState('uploads');
   const [deleteAfterFolderParse, setDeleteAfterFolderParse] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [status, setStatus] = useState('');
-  const [dragActive, setDragActive] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [running, setRunning]   = useState(false);
+  const [status, setStatus]     = useState('');
+  const [combinedResult, setCombinedResult] = useState(null);
 
   const totalQueued = useMemo(
-    () => (singleFile ? 1 : 0) + bulkFiles.length + folderFiles.length,
-    [singleFile, bulkFiles.length, folderFiles.length],
+    () => (singleFile ? 1 : 0) + bulkFiles.length + folderFiles.length + (combinedFile ? 1 : 0),
+    [singleFile, bulkFiles.length, folderFiles.length, combinedFile],
   );
-
-  function emit(message, variant = 'info') {
-    if (typeof window !== 'undefined' && typeof window.__talashNotify === 'function') {
-      window.__talashNotify(message, variant);
-    }
-  }
-
-  function setQueuedFiles(files) {
-    const pdfFiles = pickPdfFiles(files);
-    if (pdfFiles.length === 1) {
-      setSingleFile(pdfFiles[0]);
-      setBulkFiles([]);
-      setFolderFiles([]);
-    } else if (pdfFiles.length > 1) {
-      setBulkFiles(pdfFiles);
-      setSingleFile(null);
-      setFolderFiles([]);
-    }
-  }
 
   async function uploadOne(file) {
     const result = await uploadCandidateCV(file);
@@ -53,37 +36,22 @@ export default function IngestionPage({ refreshCandidates }) {
   async function uploadMany(files, label) {
     if (!files.length) {
       setStatus(`No PDF files selected for ${label}.`);
-      emit(`No PDF files selected for ${label}.`, 'error');
       return;
     }
 
     setRunning(true);
-    setProgress(5);
     setStatus(`Uploading ${files.length} file(s) from ${label}...`);
 
     try {
-      let processed = 0;
-      let failed = 0;
-
-      for (const file of files) {
-        try {
-          await uploadOne(file);
-          processed += 1;
-        } catch {
-          failed += 1;
-        }
-        setProgress(Math.round((processed + failed) / files.length * 100));
-      }
-
-      setStatus(`Uploaded ${processed}/${files.length} file(s) from ${label}. Failed: ${failed}.`);
-      emit(`Uploaded ${processed}/${files.length} PDF(s).`, failed ? 'error' : 'success');
+      const result = await uploadCandidateCVBulk(files);
+      setStatus(
+        `Uploaded ${result.processed}/${result.total_received} file(s) from ${label}. Failed: ${result.failed}.`,
+      );
       await refreshCandidates?.();
     } catch (error) {
       setStatus(`Bulk upload failed: ${error.message}`);
-      emit(`Bulk upload failed: ${error.message}`, 'error');
     } finally {
       setRunning(false);
-      setProgress(0);
     }
   }
 
@@ -94,7 +62,6 @@ export default function IngestionPage({ refreshCandidates }) {
     }
 
     setRunning(true);
-    setProgress(10);
     setStatus(`Reading and parsing PDFs from server folder: ${serverFolderPath} ...`);
 
     try {
@@ -102,14 +69,11 @@ export default function IngestionPage({ refreshCandidates }) {
       setStatus(
         `Folder ingestion complete. Processed ${result.processed}/${result.total_found}. Failed: ${result.failed}.`,
       );
-      emit(`Folder ingestion complete: ${result.processed}/${result.total_found}.`, result.failed ? 'error' : 'success');
       await refreshCandidates?.();
     } catch (error) {
       setStatus(`Folder ingestion failed: ${error.message}`);
-      emit(`Folder ingestion failed: ${error.message}`, 'error');
     } finally {
       setRunning(false);
-      setProgress(0);
     }
   }
 
@@ -120,19 +84,15 @@ export default function IngestionPage({ refreshCandidates }) {
     }
 
     setRunning(true);
-    setProgress(15);
     try {
       const name = await uploadOne(singleFile);
       setStatus(`Single CV uploaded successfully: ${name}`);
-      emit(`Single CV uploaded successfully: ${name}`, 'success');
       setSingleFile(null);
       await refreshCandidates?.();
     } catch (error) {
       setStatus(`Single upload failed: ${error.message}`);
-      emit(`Single upload failed: ${error.message}`, 'error');
     } finally {
       setRunning(false);
-      setProgress(0);
     }
   }
 
@@ -143,37 +103,45 @@ export default function IngestionPage({ refreshCandidates }) {
     }
 
     setRunning(true);
-    setProgress(20);
     try {
       const result = await parseCandidateByFilename(serverFilename.trim());
       setStatus(`Parsed existing file successfully: ${result.filename}`);
-      emit(`Parsed existing file successfully: ${result.filename}`, 'success');
       setServerFilename('');
       await refreshCandidates?.();
     } catch (error) {
       setStatus(`Parse failed: ${error.message}`);
-      emit(`Parse failed: ${error.message}`, 'error');
     } finally {
       setRunning(false);
-      setProgress(0);
     }
   }
 
-  function handleDrop(event) {
-    event.preventDefault();
-    setDragActive(false);
-    setQueuedFiles(event.dataTransfer.files);
-    setStatus('Files dropped. Ready to upload.');
+  async function handleCombinedUpload() {
+    if (!combinedFile) {
+      setStatus('Please select a combined CV PDF first.');
+      return;
+    }
+
+    setRunning(true);
+    setCombinedResult(null);
+    setStatus(`Uploading combined PDF and splitting into individual CVs...`);
+
+    try {
+      const result = await uploadCombinedBulkPDF(combinedFile);
+      setCombinedResult(result);
+      setStatus(
+        `Combined PDF split complete. Detected ${result.total_segments_detected} CV(s). ` +
+        `Processed: ${result.processed}. Failed: ${result.failed}.`,
+      );
+      setCombinedFile(null);
+      await refreshCandidates?.();
+    } catch (error) {
+      setStatus(`Combined upload failed: ${error.message}`);
+    } finally {
+      setRunning(false);
+    }
   }
 
-  function handleDragOver(event) {
-    event.preventDefault();
-    setDragActive(true);
-  }
-
-  function handleDragLeave() {
-    setDragActive(false);
-  }
+  const isError = status.toLowerCase().includes('failed') || status.toLowerCase().includes('error');
 
   return (
     <section className="page-grid two-columns">
@@ -181,19 +149,7 @@ export default function IngestionPage({ refreshCandidates }) {
         <h2>CV Ingestion</h2>
         <p className="muted">Use one place for single upload, bulk upload, folder upload, and parsing existing uploaded files.</p>
 
-        <div
-          className={`drop-zone ${dragActive ? 'active' : ''}`}
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          role="button"
-          tabIndex={0}
-          aria-label="Drop PDF files here to queue them for upload"
-        >
-          <strong>Drop PDF files here</strong>
-          <p className="muted small-text">Drag one PDF to queue a single upload, or drop multiple PDFs to queue bulk upload.</p>
-        </div>
-
+        {/* ---- Single CV Upload ---- */}
         <div className="upload-card">
           <h3>Single CV Upload</h3>
           <div className="upload-row">
@@ -202,7 +158,6 @@ export default function IngestionPage({ refreshCandidates }) {
               accept=".pdf"
               onChange={(event) => setSingleFile(event.target.files?.[0] || null)}
               disabled={running}
-              aria-label="Choose one PDF file to upload"
             />
             <button className="btn compact" type="button" onClick={handleSingleUpload} disabled={running || !singleFile}>
               Upload Single CV
@@ -210,8 +165,10 @@ export default function IngestionPage({ refreshCandidates }) {
           </div>
         </div>
 
+        {/* ---- Bulk CV Upload (multiple separate PDFs) ---- */}
         <div className="upload-card">
           <h3>Bulk CV Upload</h3>
+          <p className="muted small-text">Select multiple individual PDF files at once.</p>
           <div className="upload-row">
             <input
               type="file"
@@ -219,12 +176,73 @@ export default function IngestionPage({ refreshCandidates }) {
               multiple
               onChange={(event) => setBulkFiles(pickPdfFiles(event.target.files))}
               disabled={running}
-              aria-label="Choose multiple PDF files to upload"
             />
             <button className="btn compact" type="button" onClick={() => uploadMany(bulkFiles, 'bulk selection')} disabled={running || bulkFiles.length === 0}>
               Upload Bulk CVs ({bulkFiles.length})
             </button>
           </div>
+        </div>
+
+        {/* ---- Combined Multi-CV PDF Upload ---- */}
+        <div className="upload-card">
+          <h3>Combined Multi-CV PDF Upload</h3>
+          <p className="muted small-text">
+            Upload a <strong>single PDF</strong> containing multiple CVs separated by blank pages.
+            The system will automatically detect each CV boundary and create a separate candidate record for each.
+          </p>
+          <div className="upload-row">
+            <input
+              type="file"
+              accept=".pdf"
+              id="combined-pdf-input"
+              onChange={(event) => setCombinedFile(event.target.files?.[0] || null)}
+              disabled={running}
+            />
+            <button
+              className="btn compact"
+              type="button"
+              onClick={handleCombinedUpload}
+              disabled={running || !combinedFile}
+            >
+              Split &amp; Upload CVs
+            </button>
+          </div>
+          {combinedFile && (
+            <p className="small-text muted" style={{ marginTop: 6 }}>
+              Selected: <strong>{combinedFile.name}</strong> ({(combinedFile.size / 1024).toFixed(1)} KB)
+            </p>
+          )}
+
+          {/* Per-segment results table */}
+          {combinedResult && combinedResult.results && (
+            <div style={{ marginTop: 14 }}>
+              <p className="small-text" style={{ fontWeight: 600, marginBottom: 6 }}>
+                Segment Results ({combinedResult.total_segments_detected} CV{combinedResult.total_segments_detected !== 1 ? 's' : ''} detected):
+              </p>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                <thead>
+                  <tr style={{ background: 'var(--surface-2, #1e1e2e)', textAlign: 'left' }}>
+                    <th style={{ padding: '4px 8px' }}>#</th>
+                    <th style={{ padding: '4px 8px' }}>Pages</th>
+                    <th style={{ padding: '4px 8px' }}>Status</th>
+                    <th style={{ padding: '4px 8px' }}>Candidate ID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {combinedResult.results.map((r) => (
+                    <tr key={r.segment} style={{ borderTop: '1px solid var(--border, #333)' }}>
+                      <td style={{ padding: '4px 8px' }}>{r.segment}</td>
+                      <td style={{ padding: '4px 8px' }}>{r.pages || '—'}</td>
+                      <td style={{ padding: '4px 8px', color: r.success ? '#4caf50' : '#f44336' }}>
+                        {r.success ? '✓ OK' : `✗ ${r.error || 'Failed'}`}
+                      </td>
+                      <td style={{ padding: '4px 8px' }}>{r.candidate_id || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </article>
 
@@ -243,7 +261,6 @@ export default function IngestionPage({ refreshCandidates }) {
               directory="true"
               onChange={(event) => setFolderFiles(pickPdfFiles(event.target.files))}
               disabled={running}
-              aria-label="Choose a folder of PDF files to upload"
             />
             <button className="btn compact" type="button" onClick={() => uploadMany(folderFiles, 'folder selection')} disabled={running || folderFiles.length === 0}>
               Upload Folder PDFs ({folderFiles.length})
@@ -261,7 +278,6 @@ export default function IngestionPage({ refreshCandidates }) {
               placeholder="uploads"
               disabled={running}
               className="text-input"
-              aria-label="Server folder path"
             />
             <button
               className="btn compact"
@@ -293,7 +309,6 @@ export default function IngestionPage({ refreshCandidates }) {
               placeholder="example_cv.pdf"
               disabled={running}
               className="text-input"
-              aria-label="Filename already on server"
             />
             <button className="btn compact" type="button" onClick={handleParseExisting} disabled={running || !serverFilename.trim()}>
               Parse Existing File
@@ -303,13 +318,7 @@ export default function IngestionPage({ refreshCandidates }) {
         </div>
 
         <p className="muted small-text">Total currently selected files: {totalQueued}</p>
-        {running && (
-          <div className="progress-block" aria-label="Upload progress">
-            <div className="progress-track"><span style={{ width: `${progress}%` }} /></div>
-            <p className="muted small-text">{progress > 0 ? `Processing... ${progress}%` : 'Processing...'}</p>
-          </div>
-        )}
-        {status && <p className={status.toLowerCase().includes('failed') ? 'error-text' : 'success-text'}>{status}</p>}
+        {status && <p className={isError ? 'error-text' : 'success-text'}>{status}</p>}
       </article>
     </section>
   );
